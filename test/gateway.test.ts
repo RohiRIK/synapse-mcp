@@ -247,7 +247,12 @@ test('separate gateway processes keep tenant contexts isolated', { timeout: 10_0
 });
 
 for (const signal of ['SIGINT', 'SIGTERM', 'EOF'] as const) {
-  test(`graceful shutdown on ${signal} closes SSE sessions`, { timeout: 10_000 }, async (t) => {
+  test(`graceful shutdown on ${signal} closes SSE sessions`, {
+    timeout: 10_000,
+    // Windows child.kill() force-terminates rather than delivering POSIX signals.
+    // EOF cleanup is still exercised on every platform.
+    skip: process.platform === 'win32' && signal !== 'EOF',
+  }, async (t) => {
     const backend = await fixture();
     t.after(() => backend.close());
     const dir = await mkdtemp(join(tmpdir(), 'mcp-shutdown-'));

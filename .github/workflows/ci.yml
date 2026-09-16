@@ -6,9 +6,11 @@ permissions:
   contents: read
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
         node: [22, 24]
     steps:
       - uses: actions/checkout@v4
@@ -21,3 +23,24 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run test
       - run: bun audit --production
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile
+        working-directory: dashboard
+      - run: bun run test
+        working-directory: dashboard
+      - run: bunx playwright install --with-deps chromium
+        working-directory: dashboard
+      - run: bun run test:browser
+        working-directory: dashboard
+      - run: bun audit --production
+        working-directory: dashboard

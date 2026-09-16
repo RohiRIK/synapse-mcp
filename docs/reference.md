@@ -4,6 +4,23 @@
 
 The README covers getting started. This page covers the constraints and operational details you need when adapting or deploying the template.
 
+## Client connection contract
+
+Synapse is client-agnostic: any agent, IDE, or application that implements MCP over stdio can launch it. Product names such as Claude, Cursor, Hermes, OpenClaw, and pi identify possible hosts, not gateway dependencies or a verified compatibility list. A host may require its own MCP extension or bridge.
+
+Configure the host's stdio integration with:
+
+| Setting | Value |
+| --- | --- |
+| Executable | Absolute path to `node` |
+| Arguments | Absolute path to this repository's `dist/index.js` |
+| Environment | `SERVICE_AUTH_TOKEN`, `TENANT_ID`, and an absolute `MCP_CONFIG_PATH` |
+| Optional telemetry | `MCP_DASHBOARD_ENABLED=true` only when the dashboard package is built and wanted |
+
+The host owns the process's stdin/stdout; stdout contains MCP frames only. Each host launches its own process and fixes its tenant through the environment. There is no vendor-specific routing, no shared upstream HTTP endpoint, and no session recovery after that process exits.
+
+Both client-facing and downstream Streamable HTTP support remain planned. The optional dashboard HTTP server cannot be used as an MCP endpoint. The JSON examples below use the `mcpServers` format accepted by some hosts; translate the launch settings into your host's own configuration format where necessary.
+
 ## Configuration
 
 | Environment variable | Required | Meaning |
@@ -11,8 +28,9 @@ The README covers getting started. This page covers the constraints and operatio
 | `SERVICE_AUTH_TOKEN` | Yes | Nonempty, header-safe bearer token; no `Bearer ` prefix |
 | `TENANT_ID` | Yes | Immutable identity, 1–128 letters/digits/dots/underscores/hyphens; starts with a letter or digit |
 | `MCP_CONFIG_PATH` | No | JSON configuration path; defaults to `config.json` relative to the working directory |
+| `MCP_DASHBOARD_ENABLED` | No | Strict `true` or `false`; defaults to `false`. Enables the optional local read-only telemetry agent, not an HTTP listener. Requires `dashboard/` to be built. |
 
-Use an absolute configuration path in desktop clients. The environment and config file are trusted administrative inputs, not model-controlled settings.
+Use an absolute configuration path in MCP hosts. The environment and config file are trusted administrative inputs, not model-controlled settings.
 
 ### Service configuration rules
 
@@ -31,6 +49,12 @@ Use your system's trusted CA configuration for internal TLS. Do not disable cert
 The gateway itself does not load `.env`. Bun scripts inherit Bun's automatic `.env` loading; direct Node launches require `--env-file` or host-injected environment variables.
 
 `.env` and `config.local.json` are ignored by Git. Never commit real secrets, and restrict access to desktop host configuration files containing tokens. Commit `bun.lock` and install with `bun install --frozen-lockfile` for reproducible dependency resolution.
+
+## Optional dashboard
+
+The [dashboard package](../dashboard/README.md) is installed and built separately. Disabled gateways do not import it, collect dashboard event history, create telemetry sockets, or start dashboard HTTP servers. Opted-in gateways expose only allowlisted operational metadata through a private per-user Unix socket. A separately launched dashboard server serves the React UI on loopback with a temporary access token.
+
+This interface is read-only and scoped to the same OS user. It does not provide protection from arbitrary programs already running under that user. Stop the dashboard independently; removing gateway telemetry requires disabling the environment flag and restarting the gateway.
 
 ## Tool behavior
 
@@ -87,7 +111,7 @@ This template is not a shared multi-user authorization broker. A host that can l
 
 ## Two-tenant client configuration
 
-Run one process per tenant, with separate environment and appropriately scoped credentials. The endpoint configuration can be shared if it contains no secrets.
+Run one process per tenant, with separate environment and appropriately scoped credentials. The endpoint configuration can be shared if it contains no secrets. This example uses a Claude Desktop/Cursor-style `mcpServers` map; other clients or adapters may require a different configuration format.
 
 ```json
 {
@@ -163,4 +187,4 @@ bun audit --production
 
 The test script builds the project, then uses Node's test runner with local mock SSE servers and real subprocess stdio clients. It covers header injection, redirect rejection, tenant isolation and override rejection, pagination, partial and total outages, stalled connection deadlines, tool errors and timeouts, live discovery updates, and signal/EOF cleanup.
 
-No external services or credentials are required. Use `bun run test`, not Bun's separate `bun test` runner.
+No external services or credentials are required. Use `bun run test`, not Bun's separate `bun test` runner. These are protocol-level tests, not a claim that every named AI host has been tested. For gateway and optional dashboard smoke-test commands, see [testing and verification](testing.md).

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1120" height="480" viewBox="0 0 1120 480" role="img" aria-labelledby="title desc">
   <title id="title">Synapse MCP: one gateway, multiple MCP services</title>
-  <desc id="desc">Claude Desktop or Cursor connects to a tenant-scoped Synapse gateway over stdio. The gateway routes namespaced tool calls to billing and CRM services over SSE and HTTP, adding a fixed bearer token and tenant header.</desc>
+  <desc id="desc">An MCP-capable agent, IDE, or application connects to a tenant-scoped Synapse gateway over stdio. The gateway routes namespaced tool calls to billing and CRM services over SSE and HTTP, adding a fixed bearer token and tenant header.</desc>
   <defs>
     <linearGradient id="background" x2="1" y2="1">
       <stop stop-color="#101b32"/>
@@ -22,9 +22,9 @@
     <text x="48" y="115" fill="#b6c5dc" font-size="20">One connection for your AI client. One tenant context for every tool call.</text>
 
     <rect x="48" y="172" width="250" height="192" rx="18" fill="#18243b" stroke="#344765"/>
-    <text x="72" y="209" fill="#a9bde0" font-size="13" font-weight="700" letter-spacing="1.5">YOUR AI CLIENT</text>
-    <text x="72" y="252" fill="#f0f5ff" font-size="24" font-weight="600">Claude Desktop</text>
-    <text x="72" y="283" fill="#f0f5ff" font-size="24" font-weight="600">or Cursor</text>
+    <text x="72" y="209" fill="#a9bde0" font-size="13" font-weight="700" letter-spacing="1.5">ANY MCP STDIO HOST</text>
+    <text x="72" y="252" fill="#f0f5ff" font-size="24" font-weight="600">Agents · IDEs</text>
+    <text x="72" y="283" fill="#f0f5ff" font-size="24" font-weight="600">Custom apps</text>
     <text x="72" y="332" fill="#b6c5dc" font-size="16">Sees one combined tool list</text>
 
     <path d="M298 268H365" fill="none" stroke="#83dcc8" stroke-width="2" marker-end="url(#arrow)"/>

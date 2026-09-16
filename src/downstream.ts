@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import {
@@ -11,9 +12,21 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import type { GatewayConfig, ServiceConfig } from './config.js';
 
+type LogEvent = { time: string; level: 'info' | 'warn' | 'error'; message: string; service?: string };
+const logListeners = new Set<(event: LogEvent) => void>();
+
+export function subscribeLogs(listener: (event: LogEvent) => void): () => void {
+  logListeners.add(listener);
+  return () => { logListeners.delete(listener); };
+}
+
 // Deliberately accept only fixed messages, never downstream error bodies or credentials.
 export function log(level: 'info' | 'warn' | 'error', message: string, service?: string): void {
-  process.stderr.write(`${JSON.stringify({ level, message, ...(service ? { service } : {}) })}\n`);
+  const event: LogEvent = { time: new Date().toISOString(), level, message, ...(service ? { service } : {}) };
+  process.stderr.write(`${JSON.stringify(event)}\n`);
+  for (const listener of logListeners) {
+    try { listener(event); } catch { /* Optional observers must not affect MCP execution. */ }
+  }
 }
 
 /** Also bounds transport startup, which the SDK's JSON-RPC request timeout does not. */
@@ -72,15 +85,23 @@ type Connection = {
   closing?: Promise<void>;
   refreshing?: Promise<void>;
   refreshAgain: boolean;
+  activeRequests: number;
+  connectedAt: string | null;
+  lastActivityAt: string | null;
 };
 
 export class DownstreamManager {
   private readonly connections = new Map<string, Connection>();
   private starting: Promise<void> | undefined;
   private stopped = false;
+  private readonly observing: boolean;
+  private readonly requests = new Map<string, { id: string; service: string; startedAt: string }>();
+  private completedCalls = 0;
+  private failedCalls = 0;
   onToolsChanged: () => void = () => {};
 
   constructor(config: GatewayConfig) {
+    this.observing = config.dashboardEnabled === true;
     for (const service of config.services) {
       const abort = new AbortController();
       const authenticatedFetch = createAuthenticatedFetch(config, new URL(service.url), abort.signal);
@@ -99,6 +120,7 @@ export class DownstreamManager {
       const client = new Client({ name: 'tenant-mcp-gateway', version: '1.0.0' }, { capabilities: {} });
       const connection: Connection = {
         config: service, client, transport, abort, status: 'connecting', tools: [], refreshAgain: false,
+        activeRequests: 0, connectedAt: null, lastActivityAt: null,
       };
       // Fail closed on a broken stream; do not keep routing with a stale SSE session.
       client.onerror = () => this.unavailable(connection);
@@ -124,6 +146,8 @@ export class DownstreamManager {
       }, connection.config.timeout, connection.abort.signal);
       if (connection.abort.signal.aborted || this.stopped) return;
       connection.status = 'ready';
+      connection.connectedAt = new Date().toISOString();
+      connection.lastActivityAt = connection.connectedAt;
       log('info', 'Downstream connected', connection.config.name);
       this.onToolsChanged();
       if (connection.refreshAgain) void this.refresh(connection);
@@ -211,6 +235,14 @@ export class DownstreamManager {
     if (!connection.tools.some((tool) => tool.name === params.name)) {
       throw new McpError(ErrorCode.MethodNotFound, 'Unknown downstream tool');
     }
+    const requestId = this.observing && this.requests.size < 128 ? randomUUID() : undefined;
+    connection.activeRequests++;
+    connection.lastActivityAt = new Date().toISOString();
+    if (requestId) {
+      this.requests.set(requestId, { id: requestId, service, startedAt: connection.lastActivityAt });
+      log('info', 'Tool call started', service);
+    }
+    let failed = true;
     try {
       const result = await withDeadline(
         (requestSignal) => connection.client.callTool(params, CallToolResultSchema, {
@@ -222,7 +254,9 @@ export class DownstreamManager {
         connection.config.timeout,
         AbortSignal.any([signal, connection.abort.signal]),
       );
-      return CallToolResultSchema.parse(result);
+      const parsed = CallToolResultSchema.parse(result);
+      failed = parsed.isError === true;
+      return parsed;
     } catch (error) {
       // Do not forward downstream error data/messages: they may contain credentials or internals.
       if (error instanceof McpError && error.code === ErrorCode.MethodNotFound) {
@@ -232,7 +266,34 @@ export class DownstreamManager {
         throw new McpError(ErrorCode.InvalidParams, 'Downstream rejected tool arguments');
       }
       throw new McpError(ErrorCode.InternalError, 'Downstream tool failed, timed out, or was cancelled');
+    } finally {
+      connection.activeRequests--;
+      connection.lastActivityAt = new Date().toISOString();
+      this.completedCalls++;
+      if (failed) this.failedCalls++;
+      if (requestId) this.requests.delete(requestId);
+      if (this.observing) log(failed ? 'warn' : 'info', failed ? 'Tool call failed' : 'Tool call completed', service);
     }
+  }
+
+  /** Allowlisted operational metadata only; never expose config, URLs, tenant IDs or payloads. */
+  inspect() {
+    const services = [...this.connections.values()].map((connection) => ({
+      name: connection.config.name,
+      transport: 'sse' as const,
+      status: connection.status,
+      toolCount: connection.status === 'ready' ? connection.tools.length : 0,
+      activeRequests: connection.activeRequests,
+      connectedAt: connection.connectedAt,
+      lastActivityAt: connection.lastActivityAt,
+    }));
+    return {
+      services,
+      requests: [...this.requests.values()],
+      requestsTruncated: services.reduce((sum, service) => sum + service.activeRequests, 0) - this.requests.size,
+      completedCalls: this.completedCalls,
+      failedCalls: this.failedCalls,
+    };
   }
 
   async close(): Promise<void> {

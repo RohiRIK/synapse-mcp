@@ -2,13 +2,15 @@
 
 **One connection to your tools. A fixed tenant context for every call.**
 
-Connect Claude Desktop or Cursor to multiple internal MCP services through a single gateway. Synapse combines their tools, routes each call to the right service, and adds your service token and tenant ID to every downstream request.
+A **client-agnostic MCP gateway** for agents, IDEs, and custom applications. Connect any host with an MCP stdio integration to multiple internal MCP services. Synapse combines their tools, routes each call to the right service, and adds your service token and tenant ID to every downstream request.
 
-![Synapse architecture: Claude Desktop or Cursor connects over stdio to a tenant-scoped gateway, which routes tools to billing and CRM over SSE and HTTP.](docs/images/architecture.svg)
+Claude, Cursor, Hermes, OpenClaw, pi, or your own agent—the integration point is **MCP**, not a particular product. Each host needs compatible MCP support, either built in or through an adapter; see [client compatibility](#client-compatibility).
+
+![Synapse architecture: an MCP-capable agent, IDE, or application connects over stdio to a tenant-scoped gateway, which routes tools to billing and CRM over SSE and HTTP.](docs/images/architecture.svg)
 
 [![CI](https://github.com/RohiRIK/synapse-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/RohiRIK/synapse-mcp/actions/workflows/ci.yml)
 
-[Get started](#get-started) · [Connect your AI client](#connect-your-ai-client) · [Multiple tenants](#multiple-tenants) · [Technical reference](docs/reference.md)
+[Get started](#get-started) · [Connect your AI client](#connect-your-ai-client) · [Optional dashboard](#optional-dashboard) · [Smoke tests](docs/testing.md) · [Technical reference](docs/reference.md)
 
 ## What does it do?
 
@@ -27,11 +29,33 @@ The model chooses a tool. **It does not choose the tenant.** That identity comes
 - **Bun-first development:** install, build, and test with Bun; run the MCP process with Node.
 
 > [!NOTE]
-> This is a **tools-only, stdio-to-SSE template** built with the official [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk). It does not proxy resources or prompts. The SDK recommends Streamable HTTP for new services; this project intentionally supports existing SSE endpoints. `/mcp` and `/sse` are not interchangeable.
+> This is a **tools-only, stdio-to-SSE template** built with the official [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk). It does not proxy resources or prompts. The SDK recommends Streamable HTTP for new services; this project currently connects to SSE endpoints. `/mcp` and `/sse` are not interchangeable.
+
+### Available now vs. planned
+
+| Available now | Planned—not implemented yet |
+| --- | --- |
+| Any compatible MCP **stdio** host → gateway | Optional client-facing Streamable HTTP endpoint |
+| Gateway → downstream **SSE** services | Downstream Streamable HTTP alongside SSE |
+| Optional read-only local dashboard | Reconnect, disconnect, and operator cancellation controls |
+
+The dashboard's HTTP server is for the browser UI only. It is **not** an MCP endpoint. See the [implementation plan](docs/plans/lightweight-gateway.md) for the next steps.
 
 ## Get started
 
 You'll need **Bun 1.3.14+**, **Node.js 22.14+**, and at least one downstream MCP server with an SSE endpoint. The example billing and CRM services are not included.
+
+### Platform support
+
+| Platform | Gateway (dashboard disabled) | Optional local dashboard |
+| --- | --- | --- |
+| macOS | Supported target; CI on Node 22/24 | Supported |
+| Linux | Supported target; CI on Node 22/24 | Supported |
+| Windows | Supported target; CI on Node 22/24 | **Not supported natively**—keep `MCP_DASHBOARD_ENABLED=false` |
+
+Check the current [CI results](https://github.com/RohiRIK/synapse-mcp/actions/workflows/ci.yml) before rolling out a revision. Windows uses stdin EOF for tested graceful cleanup; its forced process termination is not equivalent to POSIX signals. Named AI-host integrations and your own backend authorization still need a local acceptance check.
+
+For a team handoff, start with a **small pilot**, not an unattended production rollout. Every user needs Node, Bun, a compatible MCP stdio host/integration, and authorized credentials for configured **SSE** backends. Downstream Streamable HTTP servers are not supported yet.
 
 ### 1. Install
 
@@ -41,6 +65,8 @@ cd synapse-mcp
 bun install --frozen-lockfile
 cp .env.example .env
 ```
+
+On Windows PowerShell, use `Copy-Item .env.example .env` for the last step. The Bun commands are the same. Use `(Get-Command node).Source` to locate Node; in JSON, escape backslashes (`C:\\Path` becomes `"C:\\\\Path"`) or use forward slashes in absolute paths.
 
 ### 2. Set your identity
 
@@ -93,7 +119,24 @@ node --env-file=.env dist/index.js
 
 ## Connect your AI client
 
-Add this entry to Claude Desktop's `claude_desktop_config.json`, or to Cursor's MCP configuration. Replace the paths and credentials with your own:
+### Client compatibility
+
+Synapse does not select, authenticate, or route differently based on the client brand. Today it exposes standard MCP over **stdio**:
+
+| Your host supports | How to connect |
+| --- | --- |
+| Launching an MCP stdio server | Launch `node /absolute/path/to/synapse-mcp/dist/index.js` with the gateway environment variables |
+| MCP through a plugin, extension, or bridge | Configure that integration to launch the same stdio command |
+| Only remote HTTP MCP endpoints | An upstream Streamable HTTP server mode is still needed; it is not implemented yet |
+| No MCP integration | Add an MCP client adapter first; Synapse cannot connect through a proprietary tool protocol automatically |
+
+For Hermes, OpenClaw, pi, and other hosts, check the capabilities of your installed version and MCP integration. Their configuration formats can differ; do not assume they all accept the JSON below. Automated tests currently use the official SDK's MCP client—not a verified end-to-end integration with every named product.
+
+In stdio mode, each host launches its own gateway process. This is not yet a shared network endpoint for multiple hosts. Upstream HTTP access is separate from the planned support for HTTP **downstream services**, and the optional dashboard is not an MCP endpoint.
+
+### Example: Claude Desktop / Cursor
+
+These are configuration examples, not a restriction on supported clients. Add this entry to Claude Desktop's `claude_desktop_config.json`, or to Cursor's MCP configuration. Replace the paths and credentials with your own:
 
 ```json
 {
@@ -143,6 +186,25 @@ Legacy tools that require a `tenant_id` argument must be updated to read the tra
 
 Read the [full security contract](docs/reference.md#tenant-security-contract) before deploying.
 
+## Optional dashboard
+
+Want a visual overview? The **[React + Vite dashboard](dashboard/README.md)** lives in its own `dashboard/` folder and is **disabled by default**. The gateway does not install, build, or start it automatically.
+
+It shows opted-in local gateway sessions, MCP connection status, active requests, and recent logs. This first version is read-only; it cannot invoke tools, disconnect services, or change tenant identity.
+
+```sh
+# One-time optional setup
+cd dashboard
+bun install --frozen-lockfile
+bun run build
+```
+
+Add `MCP_DASHBOARD_ENABLED=true` to the environment of each gateway you want to inspect, then restart those gateways. In a **separate terminal**, run `bun run start` from `dashboard/` and open the private localhost link it prints.
+
+To disable it, stop the dashboard, set `MCP_DASHBOARD_ENABLED=false` (or remove it), and restart your gateways. You can leave `dashboard/` entirely uninstalled if you do not need it. Local telemetry currently supports macOS/Linux.
+
+[Setup, screenshots, and privacy details →](dashboard/README.md)
+
 ## Everyday commands
 
 | Command | What it does |
@@ -153,9 +215,15 @@ Read the [full security contract](docs/reference.md#tenant-security-contract) be
 | `bun run test` | Build and run unit + real stdio/SSE integration tests |
 | `bun audit --production` | Check production dependencies for known vulnerabilities |
 
-Use **`bun run test`**, not `bun test`: the script uses Node's test runner to exercise the desktop runtime. Tests start their own local mock services; no external credentials are needed.
+Use **`bun run test`**, not `bun test`: the script uses Node's test runner to exercise the gateway's stdio runtime. Tests start their own local mock services; no external credentials are needed.
 
 Bun scripts load `.env` automatically. Direct Node launches need `--env-file` or environment variables supplied by the host.
+
+## Verify your setup
+
+From the repository root, run `bun run check`. It builds the gateway and tests real MCP initialization, tool discovery/calls, tenant isolation, partial outages, and shutdown using an SDK client—not a specific AI product.
+
+The optional dashboard has separate integration and browser checks. See **[smoke-test instructions](docs/testing.md)** for the complete commands and what they verify.
 
 ## Something not working?
 

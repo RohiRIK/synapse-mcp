@@ -36,6 +36,7 @@ const envSchema = z.object({
   SERVICE_AUTH_TOKEN: z.string().min(1).max(8192).regex(/^[\x21-\x7e]+$/),
   TENANT_ID: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
   MCP_CONFIG_PATH: z.string().min(1).default('config.json'),
+  MCP_DASHBOARD_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
 });
 
 export type ServiceConfig = Readonly<z.infer<typeof serviceSchema>>;
@@ -43,6 +44,7 @@ export type GatewayConfig = Readonly<{
   serviceAuthToken: string;
   tenantId: string;
   services: readonly ServiceConfig[];
+  dashboardEnabled?: boolean;
 }>;
 
 export async function loadConfig(env: NodeJS.ProcessEnv = process.env): Promise<GatewayConfig> {
@@ -66,6 +68,7 @@ export async function loadConfig(env: NodeJS.ProcessEnv = process.env): Promise<
   return Object.freeze({
     serviceAuthToken: parsedEnv.data.SERVICE_AUTH_TOKEN,
     tenantId: parsedEnv.data.TENANT_ID,
+    dashboardEnabled: parsedEnv.data.MCP_DASHBOARD_ENABLED,
     services: Object.freeze(parsedFile.data.services.map((service) => Object.freeze(service))),
   });
 }

@@ -6,3 +6,6 @@ dist/
 *.log
 coverage/
 config.local.json
+dashboard/test-results/
+dashboard/playwright-report/
+graphify-out/
