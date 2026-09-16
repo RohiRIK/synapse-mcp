@@ -1,0 +1,14 @@
+{
+  "services": [
+    {
+      "name": "billing",
+      "url": "http://127.0.0.1:3001/sse",
+      "timeout": 10000
+    },
+    {
+      "name": "crm",
+      "url": "http://127.0.0.1:3002/sse",
+      "timeout": 10000
+    }
+  ]
+}
