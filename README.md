@@ -1,180 +1,181 @@
-# Tenant-isolated MCP Gateway
+# Synapse MCP
 
-A TypeScript virtual MCP server using the official `@modelcontextprotocol/sdk`:
+**One connection to your tools. A fixed tenant context for every call.**
 
-```text
-Claude Desktop / Cursor
-        │ stdio (MCP JSON-RPC only)
-        ▼
-One gateway process per tenant
-        ├── SSE GET + HTTP POST → billing
-        └── SSE GET + HTTP POST → crm
-             Authorization: Bearer <SERVICE_AUTH_TOKEN>
-             X-Tenant-ID: <TENANT_ID>
-```
+Connect Claude Desktop or Cursor to multiple internal MCP services through a single gateway. Synapse combines their tools, routes each call to the right service, and adds your service token and tenant ID to every downstream request.
 
-Downstreams connect in parallel. Healthy services remain usable if another service fails. This is a **tools-only** gateway: it does not proxy resources, prompts, sampling, elicitation, subscriptions, or experimental tasks.
+![Synapse architecture: Claude Desktop or Cursor connects over stdio to a tenant-scoped gateway, which routes tools to billing and CRM over SSE and HTTP.](docs/images/architecture.svg)
 
-> The SDK now recommends Streamable HTTP for new deployments. This template deliberately uses `SSEClientTransport` to support the HTTP/SSE downstream servers requested here. A Streamable HTTP `/mcp` endpoint is not interchangeable with an SSE `/sse` endpoint.
+[![CI](https://github.com/RohiRIK/synapse-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/RohiRIK/synapse-mcp/actions/workflows/ci.yml)
 
-## Quick start
+[Get started](#get-started) · [Connect your AI client](#connect-your-ai-client) · [Multiple tenants](#multiple-tenants) · [Technical reference](docs/reference.md)
 
-Requires **Bun 1.3.14+** for package management/scripts and **Node.js 22.14+** for the tested MCP runtime. Bun is the default development toolchain; Node keeps the official SDK's stdio lifecycle consistent across desktop hosts.
+## What does it do?
+
+Imagine you have a billing server and a CRM server. Instead of configuring both in every AI client, connect the client to Synapse:
+
+| Your service exposes | Your AI client sees |
+| --- | --- |
+| Billing → `create_invoice` | `billing__create_invoice` |
+| CRM → `get_user` | `crm__get_user` |
+
+The model chooses a tool. **It does not choose the tenant.** That identity comes from the gateway's environment, not tool arguments.
+
+- **One tool list:** discover tools from all configured services in parallel.
+- **No name collisions between services:** every tool gets a service prefix.
+- **Partial-failure support:** if billing is offline, CRM can still work.
+- **Bun-first development:** install, build, and test with Bun; run the MCP process with Node.
+
+> [!NOTE]
+> This is a **tools-only, stdio-to-SSE template** built with the official [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk). It does not proxy resources or prompts. The SDK recommends Streamable HTTP for new services; this project intentionally supports existing SSE endpoints. `/mcp` and `/sse` are not interchangeable.
+
+## Get started
+
+You'll need **Bun 1.3.14+**, **Node.js 22.14+**, and at least one downstream MCP server with an SSE endpoint. The example billing and CRM services are not included.
+
+### 1. Install
 
 ```sh
+git clone https://github.com/RohiRIK/synapse-mcp.git
+cd synapse-mcp
 bun install --frozen-lockfile
 cp .env.example .env
-# Edit .env with real credentials and config.json with your SSE endpoints.
-bun run build
-node --env-file=.env dist/index.js
 ```
 
-The process waits for an MCP client on stdin; it is not a human-facing CLI. An empty tool list is expected if neither example downstream is running.
+### 2. Set your identity
 
-Alternatively, export the environment before using the scripts:
+Edit `.env`:
 
-```sh
-export SERVICE_AUTH_TOKEN='your-service-token'
-export TENANT_ID='tenant-acme'
-export MCP_CONFIG_PATH='/absolute/path/to/config.json'
-bun run start        # compiled server (Node runtime)
-bun run dev          # TypeScript via tsx
-bun run test         # builds, then runs unit and real stdio/SSE integration tests
+```dotenv
+SERVICE_AUTH_TOKEN=replace-with-your-service-token
+TENANT_ID=tenant-acme
+MCP_CONFIG_PATH=./config.json
 ```
 
-The gateway itself does not load `.env`. Bun scripts inherit Bun's automatic `.env` loading; direct Node launches need `--env-file` or environment variables injected by the MCP host. Never commit secrets; `.env` and `config.local.json` are ignored. Commit `bun.lock` and deploy with `bun install --frozen-lockfile` for reproducible dependency resolution.
+Use the token itself, without a `Bearer ` prefix. Keep real credentials out of Git; `.env` is already ignored.
 
-Use **`bun run test`**, not `bun test`: the script deliberately runs Node's test runner, exercising the same runtime as desktop clients.
+### 3. Add your services
 
-## Configuration
-
-| Environment variable | Required | Meaning |
-| --- | --- | --- |
-| `SERVICE_AUTH_TOKEN` | Yes | Nonempty, header-safe bearer token; no `Bearer ` prefix |
-| `TENANT_ID` | Yes | Immutable tenant identity, 1–128 letters/digits/dots/underscores/hyphens; starts with a letter or digit |
-| `MCP_CONFIG_PATH` | No | JSON configuration path, default `config.json` relative to the working directory |
-
-Use an **absolute configuration path** in desktop clients, whose working directory may differ from your shell.
+Edit `config.json` to point at your actual SSE endpoints:
 
 ```json
 {
   "services": [
     {
       "name": "billing",
-      "url": "https://billing.internal.example/sse",
+      "url": "http://127.0.0.1:3001/sse",
       "timeout": 10000
     },
     {
       "name": "crm",
-      "url": "https://crm.internal.example/sse",
-      "timeout": 15000
+      "url": "http://127.0.0.1:3002/sse",
+      "timeout": 10000
     }
   ]
 }
 ```
 
-- `services` contains 1–64 uniquely named services. Unknown configuration keys fail validation.
-- Names are at most 32 characters: lowercase letters/digits with single internal `_` or `-` separators, starting with a letter. `__` and trailing separators are forbidden to make routing unambiguous.
-- `timeout` is milliseconds, defaults to `10000`, and must be 100–300000. It bounds the **entire startup + initial discovery**, each subsequent full discovery, and each tool call. Progress does not extend deadlines.
-- URLs must use HTTPS, except HTTP on `localhost`, `127.0.0.1`, or `[::1]` for local development. URL credentials and fragments are forbidden. Use your system's trusted CA configuration for internal TLS; do not disable certificate validation.
-- The same process-scoped token and tenant are sent to every configured service. Configure only trusted endpoints authorized to receive those credentials.
-- Configuration is validated by Zod and frozen at startup. Restart to change endpoints, rotate credentials, or change tenants.
+`timeout` is in milliseconds. Use **HTTPS** outside loopback development addresses. Only configure trusted services: every listed endpoint receives the process's token and tenant ID.
 
-## Claude Desktop / Cursor
+### 4. Build
 
-After building, add this to `claude_desktop_config.json` (or Cursor's MCP configuration):
+```sh
+bun run build
+```
+
+You're ready to connect an AI client below. For a local startup check, you can also run:
+
+```sh
+node --env-file=.env dist/index.js
+```
+
+**A quiet terminal is normal.** This process waits for MCP messages on stdin; it isn't a chat interface or web server. Logs go to stderr. Press `Ctrl+C` to stop it.
+
+## Connect your AI client
+
+Add this entry to Claude Desktop's `claude_desktop_config.json`, or to Cursor's MCP configuration. Replace the paths and credentials with your own:
 
 ```json
 {
   "mcpServers": {
     "acme-gateway": {
       "command": "/absolute/path/to/node",
-      "args": ["/absolute/path/to/tenant-mcp-gateway/dist/index.js"],
+      "args": ["/absolute/path/to/synapse-mcp/dist/index.js"],
       "env": {
         "SERVICE_AUTH_TOKEN": "replace-with-acme-service-token",
         "TENANT_ID": "tenant-acme",
-        "MCP_CONFIG_PATH": "/absolute/path/to/tenant-mcp-gateway/config.json"
+        "MCP_CONFIG_PATH": "/absolute/path/to/synapse-mcp/config.json"
       }
     }
   }
 }
 ```
 
-Use an actual absolute Node executable path, especially with a version manager. Restart the host after changing configuration. Launch Node directly, **not a package-manager script**, from MCP hosts to keep wrappers and script banners out of the stdio protocol. Restrict access to host configuration files containing tokens.
+Restart your client after saving. When the downstream services are available, you should see tools such as `billing__create_invoice` and `crm__get_user`—the exact list comes from your servers.
+
+**Two easy-to-miss details:**
+
+- Use absolute paths. Desktop clients may not start in your project directory. On macOS/Linux, `command -v node` helps locate your Node executable.
+- Launch Node directly, not `bun run start` or another package-manager wrapper. Keep script banners out of the MCP stdio channel. The host configuration above supplies the environment; it doesn't rely on your local `.env`.
 
 ## Multiple tenants
 
-Tenant identity belongs to the **process**, never to a tool argument. Launch separate gateway processes with separate credentials/environment, optionally sharing a nonsecret endpoint configuration:
+**Run one gateway process per tenant.** Give each process its own `TENANT_ID` and appropriately scoped token. The processes can share the same nonsecret service configuration.
 
-```json
-{
-  "mcpServers": {
-    "acme-gateway": {
-      "command": "/absolute/path/to/node",
-      "args": ["/absolute/path/to/tenant-mcp-gateway/dist/index.js"],
-      "env": {
-        "SERVICE_AUTH_TOKEN": "replace-with-acme-token",
-        "TENANT_ID": "tenant-acme",
-        "MCP_CONFIG_PATH": "/absolute/path/to/tenant-mcp-gateway/config.json"
-      }
-    },
-    "globex-gateway": {
-      "command": "/absolute/path/to/node",
-      "args": ["/absolute/path/to/tenant-mcp-gateway/dist/index.js"],
-      "env": {
-        "SERVICE_AUTH_TOKEN": "replace-with-globex-token",
-        "TENANT_ID": "tenant-globex",
-        "MCP_CONFIG_PATH": "/absolute/path/to/tenant-mcp-gateway/config.json"
-      }
-    }
-  }
-}
-```
+![Two separate gateway processes use fixed Acme and Globex identities. Shared backend services must validate the token and tenant and scope every data query.](docs/images/tenant-isolation.svg)
 
-**Both entries give that MCP host access to both tenants.** For users who must see only one tenant, configure only their gateway and isolate host profiles/OS accounts and credentials. Separate downstream sessions prevent transport-context mixing; they do not prevent a host with both credentials from deliberately selecting either gateway.
+For example, add `acme-gateway` and `globex-gateway` entries to your host configuration, each with a different environment. See the [complete two-tenant example](docs/reference.md#two-tenant-client-configuration).
 
-## Tool behavior
+> [!IMPORTANT]
+> A client configured with **both** gateways can access **both** tenants. Give each user only the gateway and credentials they should have. Separate processes keep transport identities separate; they do not restrict a host that already has access to both.
 
-- `create_invoice` from `billing` becomes `billing__create_invoice`.
-- Descriptions end with `[Tenant: tenant-acme] [Service: billing]`.
-- Names split at the first `__`; downstream names containing `__` still work.
-- Discovery consumes all downstream pages (bounded to 100 pages / 10000 tools per service), rejects duplicate tool names/repeating cursors, and updates on `notifications/tools/list_changed`.
-- The gateway returns one complete upstream tool list, with no cursor. Supplying a cursor is an `InvalidParams` error.
-- Reserved tenant properties and their `required` entries are removed from published input schemas, including nested definitions/composition branches. Runtime enforcement remains authoritative, including for `additionalProperties` and complex schemas.
-- Tool annotations, output schemas, structured content, and normal `isError` tool results are preserved. Downstream names that cannot form a valid namespaced name of at most 128 characters, schemas deeper than 64 levels, and task-only tools are omitted with a warning.
-- Calls forward the original arguments unchanged, with only the name un-namespaced. Session-local client `_meta` and progress tokens are not forwarded. Task-augmented calls are rejected. Upstream cancellation is propagated to downstream requests.
+## Where the security boundary is
 
-## Tenant security contract
+Synapse enforces the gateway side:
 
-1. **Identity is transport-only.** Every SSE GET (including reconnect attempts) and HTTP message POST receives forced `Authorization` and `X-Tenant-ID` headers. The modern EventSource API uses `eventSourceInit.fetch`, not a nonstandard `headers` option. `requestInit.headers` and the POST fetch hook enforce the same identity.
-2. **Arguments cannot override identity.** Calls containing `tenant_id` anywhere in their parameters, including nested objects, arrays, or `_meta`, fail with `InvalidParams` before reaching a downstream. Case variants, `tenantId`, and `tenant-id` are also reserved, even when their value matches the configured tenant. The gateway never inserts tenant identity into arguments.
-3. **Credentials cannot follow redirects.** All redirects and cross-origin message endpoints are blocked. Configure the final SSE URL directly.
-4. **Downstreams must authorize the tenant.** Each service must validate the bearer token, check that it grants access to `X-Tenant-ID`, derive data access from that header, and enforce tenant filtering at the application/database layer. Do not merely trust an arbitrary tenant header on a publicly reachable backend.
-5. **Schema filtering is not a backend migration.** Legacy tools that require an argument-based tenant must be adapted to transport-derived tenancy. The gateway will not fill in their old tenant argument. Complex schemas may still reject a call; tenant guardrails are never relaxed to make it succeed.
-6. **Descriptions are attention cues, not security boundaries.** Prompt injection, encoded strings, arbitrary business arguments, and tool result text cannot be semantically sanitized into a tenant authorization guarantee. Backend authorization is mandatory. Treat downstream descriptions/results as untrusted model content.
+- Forces `Authorization` and `X-Tenant-ID` headers on SSE GETs and HTTP POSTs.
+- Rejects `tenant_id` arguments, including nested fields and common spelling variants.
+- Blocks redirects and cross-origin message endpoints to avoid forwarding credentials elsewhere.
 
-The host controls the process environment and config file; those are trusted administrative inputs. This template is not a shared multi-user authorization broker and exposes no network listener upstream.
+**Your backend must enforce the data-access side.** Validate the bearer token, verify that it permits the requested tenant, and scope every data query to that tenant. A description saying `[Tenant: tenant-acme]` helps the model understand context; it is not authorization.
 
-## Resilience and operations
+Legacy tools that require a `tenant_id` argument must be updated to read the transport context instead. Synapse will not fill that argument in for them.
 
-- A service that cannot connect, initialize, or list tools before its deadline is quarantined. Other services continue normally; if all fail, initialization still succeeds and `tools/list` returns `[]`.
-- Broken streams or discovery failures remove a service's tools and close its transport. **There is no automatic session recovery:** restart the gateway after restoring a service. A transport reconnect alone would not safely establish a fresh MCP session.
-- Tool calls are never automatically retried: a timeout/cancellation does **not** prove the backend operation did not execute. Use backend idempotency keys for mutations.
-- Unknown tools map to `MethodNotFound`; rejected arguments to `InvalidParams`; other downstream failures/timeouts to `InternalError`. Downstream protocol error text/data is replaced with safe messages. Successful tool result bodies (including business `isError` results) are intentionally not rewritten.
-- `SIGINT`, `SIGTERM`, stdin EOF/close, and upstream transport closure trigger idempotent cleanup of all downstream clients/SSE streams and stdio. A five-second watchdog bounds shutdown.
-- Structured logs go only to **stderr**. The gateway does not log tokens, URLs, arguments, results, or raw downstream exceptions. Do not add `console.log` to server code.
-- Upstream frames are limited to 1 MiB. For deployment, also set backend response/rate/concurrency limits, monitor warning logs, use tenant-scoped least-privilege tokens, protect config files, and run dependency updates/audits in CI. This template does not implement distributed rate limiting or an administrative health endpoint.
+Read the [full security contract](docs/reference.md#tenant-security-contract) before deploying.
 
-## Project layout
+## Everyday commands
 
-```text
-src/config.ts       Zod validation and immutable configuration
-src/downstream.ts   Authenticated SSE clients, discovery, deadlines, cleanup
-src/gateway.ts      Tool namespaces, tenant guard, aggregation and routing
-src/index.ts        Stdio lifecycle, signals and EOF handling
-config.json         Example downstream endpoint map
-.env.example        Example environment (no real credentials)
-test/gateway.test.ts
-```
+| Command | What it does |
+| --- | --- |
+| `bun run dev` | Run the TypeScript entry point through `tsx` |
+| `bun run build` | Compile TypeScript into `dist/` |
+| `bun run start` | Run the compiled gateway with Node |
+| `bun run test` | Build and run unit + real stdio/SSE integration tests |
+| `bun audit --production` | Check production dependencies for known vulnerabilities |
 
-`bun run test` uses local mock SSE servers and real subprocess stdio clients. It covers header injection, redirect rejection, tenant isolation/override rejection, pagination, partial and total outages, stalled connection deadlines, tool errors/timeouts, live discovery updates, and signal/EOF cleanup. No external services or credentials are required.
+Use **`bun run test`**, not `bun test`: the script uses Node's test runner to exercise the desktop runtime. Tests start their own local mock services; no external credentials are needed.
+
+Bun scripts load `.env` automatically. Direct Node launches need `--env-file` or environment variables supplied by the host.
+
+## Something not working?
+
+| What you see | What to check |
+| --- | --- |
+| The terminal appears to do nothing | Normal: the gateway is waiting for an MCP client on stdin. |
+| No tools appear | Check stderr, service URLs, credentials, and whether your downstream servers are running. If all are unavailable, the list is empty. |
+| A restored service still isn't listed | Restart the gateway. Automatic session recovery is not implemented. |
+| A tool call rejects `tenant_id` | Remove it from the arguments. Tenant identity belongs in the process environment. |
+| A mutation timed out | Check the backend before retrying; the operation may already have executed. Use backend idempotency keys. |
+
+## Want to change how it works?
+
+The core is four files:
+
+| File | Responsibility |
+| --- | --- |
+| [`src/config.ts`](src/config.ts) | Validate environment and service configuration |
+| [`src/downstream.ts`](src/downstream.ts) | Connect, authenticate, discover tools, and enforce deadlines |
+| [`src/gateway.ts`](src/gateway.ts) | Namespace tools, reject tenant overrides, and route calls |
+| [`src/index.ts`](src/index.ts) | Run stdio and handle shutdown |
+
+For configuration limits, protocol behavior, deployment notes, and the multi-tenant config example, see the **[technical reference](docs/reference.md)**.
