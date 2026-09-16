@@ -49,11 +49,11 @@ You'll need **Bun 1.3.14+**, **Node.js 22.14+**, and at least one downstream MCP
 
 | Platform | Gateway (dashboard disabled) | Optional local dashboard |
 | --- | --- | --- |
-| macOS | Supported target; CI on Node 22/24 | Supported |
-| Linux | Supported target; CI on Node 22/24 | Supported |
-| Windows | Supported target; CI on Node 22/24 | **Not supported natively**—keep `MCP_DASHBOARD_ENABLED=false` |
+| macOS | Tested in CI on Node 22/24 | Supported |
+| Linux | Tested in CI on Node 22/24 | Supported |
+| Windows | Tested in CI on Node 22/24 | **Not supported natively**—keep `MCP_DASHBOARD_ENABLED=false` |
 
-Check the current [CI results](https://github.com/RohiRIK/synapse-mcp/actions/workflows/ci.yml) before rolling out a revision. Windows uses stdin EOF for tested graceful cleanup; its forced process termination is not equivalent to POSIX signals. Named AI-host integrations and your own backend authorization still need a local acceptance check.
+See the **[Windows / Linux / macOS setup guide](docs/platforms.md)** for host configuration examples and OS-specific notes. Check the current [CI results](https://github.com/RohiRIK/synapse-mcp/actions/workflows/ci.yml) before rolling out a revision. Windows uses stdin EOF for tested graceful cleanup; its forced process termination is not equivalent to POSIX signals. Named AI-host integrations and your own backend authorization still need a local acceptance check.
 
 For a team handoff, start with a **small pilot**, not an unattended production rollout. Every user needs Node, Bun, a compatible MCP stdio host/integration, and authorized credentials for configured **SSE** backends. Downstream Streamable HTTP servers are not supported yet.
 

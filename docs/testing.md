@@ -4,7 +4,7 @@
 
 These checks use local mock services and the official MCP SDK client. They verify the gateway independently of any particular agent or IDE. No real service token, configured backend, or external AI account is required.
 
-Requires Bun 1.3.14+ and Node.js 22.14+. Dashboard tests additionally require macOS/Linux for Unix sockets; browser tests use Chromium.
+Requires Bun 1.3.14+ and Node.js 22.14+. Gateway CI covers Windows, Linux, and macOS with Node 22/24. Dashboard tests additionally require macOS/Linux for Unix sockets; browser tests use Chromium. See [platform setup](platforms.md) for installation and host launch examples.
 
 ## 1. Gateway: default, dashboard-free path
 
@@ -23,7 +23,7 @@ This builds TypeScript and runs the suite, including real stdio/SSE protocol smo
 - Force auth/tenant headers and reject nested tenant overrides.
 - Keep healthy services available during partial outages.
 - Return a valid empty list during a total outage.
-- Handle timeouts, tool-list changes, signals, and stdin EOF.
+- Handle timeouts, tool-list changes, and stdin EOF on every platform. POSIX signal cleanup tests run on Linux/macOS and are skipped on Windows, where `child.kill()` force-terminates the process.
 
 **Expected:** exit code `0`, all tests pass. The gateway suite does not require installing or building `dashboard/`.
 
