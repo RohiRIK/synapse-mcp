@@ -26,6 +26,7 @@ The model chooses a tool. **It does not choose the tenant.** That identity comes
 - **One tool list:** discover tools from all configured services in parallel.
 - **No name collisions between services:** every tool gets a service prefix.
 - **Partial-failure support:** if billing is offline, CRM can still work.
+- **A person approves changes:** when the model sends `confirm: true` to a confirm-gated tool, Synapse shows the tool's preview in the client and runs it only if the person approves. See [approval in the client](docs/reference.md#approval-in-the-client-for-confirm-gated-tools).
 - **Runs on Bun:** install, test, and run the MCP process with Bun. There is no build step and no Node runtime.
 
 > [!NOTE]

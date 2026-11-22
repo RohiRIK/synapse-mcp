@@ -78,6 +78,16 @@ This interface is read-only and scoped to the same OS user. It does not provide 
 - Calls forward the original arguments unchanged, with only the name un-namespaced. Identity is never synthesized into tool arguments.
 - Session-local client `_meta` and progress tokens are not forwarded. Task-augmented calls are rejected. Upstream cancellation is propagated to downstream requests.
 
+### Approval in the client for confirm-gated tools
+
+A tool is confirm-gated when its input schema has a boolean `confirm` property. Called without `confirm: true`, such a tool answers with a preview whose `structuredContent.type` is `confirmation_required` and changes nothing. The model is the one that sends `confirm: true`, so Synapse does not take that as approval:
+
+1. Synapse calls the tool with `confirm: false` and gets the preview.
+2. It shows the preview to the person through MCP elicitation, as a dialog with one "I approve this change" checkbox. Instructions the downstream wrote for the model are left out.
+3. Only if the person ticks it and accepts does Synapse send the call with `confirm: true`.
+
+It fails closed. A client that does not declare elicitation, an error while asking, a decline, a cancel, an unticked accept, or no answer within 10 minutes all mean nothing runs. The model then gets an error result saying so. A tool whose first answer is not a confirmation preview has no confirmation step: that answer is returned and the tool is not called again. Calls with `confirm: false`, and tools without a boolean `confirm`, are forwarded unchanged.
+
 ### Scope
 
 This is a **tools-only** gateway. It does not proxy resources, prompts, sampling, elicitation, subscriptions, or experimental tasks. It exposes no network listener upstream.

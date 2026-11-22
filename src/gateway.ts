@@ -1,11 +1,13 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
   CallToolRequestSchema,
+  ElicitResultSchema,
   ErrorCode,
   ListToolsRequestSchema,
   McpError,
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
+import { APPROVAL_SCHEMA, APPROVAL_TIMEOUT_MS, type ApprovalChannel, isConfirmGated, runApproved } from './approval.js';
 import type { GatewayConfig } from './config.js';
 import { DownstreamManager, log } from './downstream.js';
 
@@ -61,6 +63,18 @@ export function createGateway(config: GatewayConfig, downstream: DownstreamManag
   let initialized = false;
   let tools: Tool[] = [];
   let publishedNames = new Set<string>();
+  let confirmGated = new Set<string>();
+
+  // Sent as a plain request, without `mode`, so clients that declare `elicitation: {}` (form
+  // mode before the spec named modes) are asked too.
+  const approvals: ApprovalChannel = {
+    supportsElicitation: () => server.getClientCapabilities()?.elicitation !== undefined,
+    ask: (message) => server.request(
+      { method: 'elicitation/create', params: { message, requestedSchema: APPROVAL_SCHEMA } },
+      ElicitResultSchema,
+      { timeout: APPROVAL_TIMEOUT_MS },
+    ),
+  };
 
   function rebuildTools(): void {
     tools = downstream.tools().flatMap(({ service, tool }) => {
@@ -84,6 +98,7 @@ export function createGateway(config: GatewayConfig, downstream: DownstreamManag
       }
     });
     publishedNames = new Set(tools.map((tool) => tool.name));
+    confirmGated = new Set(tools.filter((tool) => isConfirmGated(tool.inputSchema)).map((tool) => tool.name));
   }
 
   downstream.onToolsChanged = () => {
@@ -119,9 +134,21 @@ export function createGateway(config: GatewayConfig, downstream: DownstreamManag
     const name = request.params.name.slice(separator + 2);
     // Arguments are forwarded unchanged; identity is NEVER synthesized into tool arguments.
     // Client metadata/progress tokens are session-local and intentionally not forwarded.
+    const args = request.params.arguments;
+    if (confirmGated.has(request.params.name) && args?.confirm === true) {
+      // The model sent confirm: true. Only the person, in the client, can make it so.
+      return runApproved({
+        name: request.params.name,
+        input: args,
+        tenant: config.tenantId,
+        channel: approvals,
+        call: (input) => downstream.call(service, { name, arguments: input }, extra.signal),
+        onOutcome: (outcome) => log(outcome === 'approved' ? 'info' : 'warn', `Approval ${outcome}`, service),
+      });
+    }
     return downstream.call(service, {
       name,
-      ...(request.params.arguments === undefined ? {} : { arguments: request.params.arguments }),
+      ...(args === undefined ? {} : { arguments: args }),
     }, extra.signal);
   });
   return server;
