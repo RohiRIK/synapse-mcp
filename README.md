@@ -29,14 +29,14 @@ The model chooses a tool. **It does not choose the tenant.** That identity comes
 - **Runs on Bun:** install, test, and run the MCP process with Bun. There is no build step and no Node runtime.
 
 > [!NOTE]
-> This is a **tools-only, stdio-to-SSE template** built with the official [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk). It does not proxy resources or prompts. The SDK recommends Streamable HTTP for new services; this project currently connects to SSE endpoints. `/mcp` and `/sse` are not interchangeable.
+> This is a **tools-only, stdio-to-SSE template** built with the official [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk). It does not proxy resources or prompts. The SDK recommends Streamable HTTP for new services; this project currently connects to SSE endpoints and to local stdio servers. `/mcp` and `/sse` are not interchangeable.
 
 ### Available now vs. planned
 
 | Available now | Planned—not implemented yet |
 | --- | --- |
 | Any compatible MCP **stdio** host → gateway | Optional client-facing Streamable HTTP endpoint |
-| Gateway → downstream **SSE** services | Downstream Streamable HTTP alongside SSE |
+| Gateway → downstream **SSE** and local **stdio** services | Downstream Streamable HTTP alongside SSE |
 | Optional read-only local dashboard | Reconnect, disconnect, and operator cancellation controls |
 
 The dashboard's HTTP server is for the browser UI only. It is **not** an MCP endpoint. See the [implementation plan](docs/plans/lightweight-gateway.md) for the next steps.
@@ -101,7 +101,22 @@ Edit `config.json` to point at your actual SSE endpoints:
 }
 ```
 
-`timeout` is in milliseconds. Use **HTTPS** outside loopback development addresses. Only configure trusted services: every listed endpoint receives the process's token and tenant ID.
+`timeout` is in milliseconds. Use **HTTPS** outside loopback development addresses. Only configure trusted services: every listed SSE endpoint receives the process's token and tenant ID.
+
+A local MCP server can also be a service. Synapse starts it as a child process and talks to it over stdio:
+
+```json
+{
+  "name": "entra",
+  "transport": "stdio",
+  "command": "/absolute/path/to/bun",
+  "args": ["--no-env-file", "/absolute/path/to/server/src/index.ts"],
+  "env": { "LOG_LEVEL": "info" },
+  "timeout": 30000
+}
+```
+
+The child gets a minimal environment plus `SYNAPSE_TENANT_ID` and `SYNAPSE_SERVICE_NAME`, never `SERVICE_AUTH_TOKEN`. With only stdio services, `SERVICE_AUTH_TOKEN` is not needed. See the [technical reference](docs/reference.md#service-configuration-rules).
 
 ### 4. Check it starts
 

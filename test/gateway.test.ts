@@ -15,7 +15,7 @@ import {
   ToolListChangedNotificationSchema, type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
 import { fileConfigSchema, loadConfig } from '../src/config.js';
-import { createAuthenticatedFetch } from '../src/downstream.js';
+import { childEnvironment, createAuthenticatedFetch } from '../src/downstream.js';
 import { assertNoTenantOverride, sanitizeInputSchema } from '../src/gateway.js';
 
 const token = 'test-secret-do-not-log';
@@ -95,13 +95,13 @@ async function fixture() {
   };
 }
 
-async function gateway(services: unknown[], tenant = 'tenant-a') {
+async function gateway(services: unknown[], tenant = 'tenant-a', env: Record<string, string> = { SERVICE_AUTH_TOKEN: token }) {
   const dir = await mkdtemp(join(tmpdir(), 'mcp-gateway-'));
   const path = join(dir, 'config.json');
   await writeFile(path, JSON.stringify({ services }));
   const transport = new StdioClientTransport({
     command: process.execPath, args: ['--no-env-file', resolve('src/index.ts')], stderr: 'pipe',
-    env: { SERVICE_AUTH_TOKEN: token, TENANT_ID: tenant, MCP_CONFIG_PATH: path },
+    env: { ...env, TENANT_ID: tenant, MCP_CONFIG_PATH: path },
   });
   let stderr = '';
   transport.stderr?.on('data', (chunk) => { stderr += chunk.toString(); });
@@ -290,4 +290,78 @@ test('all-downstream outage still serves a valid empty tool list', { timeout: 10
   const app = await gateway([{ name: 'down', url: `${backend.url}/offline`, timeout: 300 }]);
   t.after(() => app.close());
   assert.deepEqual((await app.client.listTools()).tools, []);
+});
+
+const stdioFixture = resolve('test/fixtures/stdio-server.ts');
+const stdioService = (name: string, extra: Record<string, unknown> = {}) => ({
+  name, transport: 'stdio', command: process.execPath, args: ['--no-env-file', stdioFixture], timeout: 5000, ...extra,
+});
+
+test('stdio services: config validation', async () => {
+  const ok = fileConfigSchema.safeParse({ services: [stdioService('local')] });
+  assert(ok.success);
+  assert.deepEqual(ok.data.services[0] && 'env' in ok.data.services[0] ? ok.data.services[0].env : null, {});
+  // A service with a command must say it is stdio; an SSE service cannot carry a command.
+  assert(!fileConfigSchema.safeParse({ services: [{ name: 'x', command: 'bun' }] }).success);
+  assert(!fileConfigSchema.safeParse({ services: [{ name: 'x', url: 'https://example.com/sse', command: 'bun' }] }).success);
+  assert(!fileConfigSchema.safeParse({ services: [stdioService('x', { url: 'https://example.com/sse' })] }).success);
+  for (const key of ['SYNAPSE_TENANT_ID', 'SYNAPSE_SERVICE_NAME', 'bad-key', '1X']) {
+    assert(!fileConfigSchema.safeParse({ services: [stdioService('x', { env: { [key]: 'v' } })] }).success, key);
+  }
+  assert(!fileConfigSchema.safeParse({ services: [stdioService('x', { command: '' })] }).success);
+
+  const dir = await mkdtemp(join(tmpdir(), 'mcp-config-'));
+  try {
+    const path = join(dir, 'config.json');
+    await writeFile(path, JSON.stringify({ services: [stdioService('local')] }));
+    const config = await loadConfig({ TENANT_ID: 'tenant-a', MCP_CONFIG_PATH: path });
+    assert.equal(config.serviceAuthToken, '', 'stdio-only needs no service token');
+    await writeFile(path, JSON.stringify({ services: [stdioService('local'), { name: 'remote', url: 'https://example.com/sse' }] }));
+    await assert.rejects(loadConfig({ TENANT_ID: 'tenant-a', MCP_CONFIG_PATH: path }), /SERVICE_AUTH_TOKEN/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('stdio child environment: minimal inheritance, fixed identity, never the service token', () => {
+  const env = childEnvironment(
+    { name: 'svc', transport: 'stdio', command: 'x', args: [], env: { EXTRA: '1' }, timeout: 1000 },
+    'tenant-a',
+    { PATH: '/bin', HOME: '/home/u' },
+  );
+  assert.deepEqual(env, { PATH: '/bin', HOME: '/home/u', EXTRA: '1', SYNAPSE_TENANT_ID: 'tenant-a', SYNAPSE_SERVICE_NAME: 'svc' });
+});
+
+test('real stdio downstreams alongside SSE: routing, identity, isolation and cleanup', { timeout: 20_000 }, async (t) => {
+  const backend = await fixture();
+  t.after(() => backend.close());
+  const dir = await mkdtemp(join(tmpdir(), 'mcp-stdio-cwd-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const app = await gateway([
+    stdioService('local', { env: { FIXTURE_EXTRA: 'configured' }, cwd: dir }),
+    { name: 'remote', url: `${backend.url}/sse`, timeout: 1000 },
+    { name: 'broken', transport: 'stdio', command: join(dir, 'does-not-exist'), timeout: 1000 },
+  ]);
+  const names = (await app.client.listTools()).tools.map((tool) => tool.name).sort();
+  assert(names.includes('local__whoami'));
+  assert(names.includes('remote__echo'));
+  assert(!names.some((name) => name.startsWith('broken__')), 'a child that fails to start is offline, not fatal');
+
+  const result = await app.client.callTool({ name: 'local__whoami', arguments: { value: 1 } });
+  const data = result.structuredContent as Record<string, unknown>;
+  assert.equal(data.tenant, 'tenant-a');
+  assert.equal(data.service, 'local');
+  assert.equal(data.extra, 'configured');
+  assert.equal(data.hasToken, false, 'stdio children never see SERVICE_AUTH_TOKEN');
+  assert.equal(data.hasConfigPath, false, 'stdio children do not inherit the gateway environment');
+  assert.deepEqual(data.args, { value: 1 });
+  const { realpath } = await import('node:fs/promises');
+  assert.equal(await realpath(String(data.cwd)), await realpath(dir));
+  await assert.rejects(app.client.callTool({ name: 'local__whoami', arguments: { tenantId: 'other' } }), isCode(ErrorCode.InvalidParams));
+
+  const pid = Number(data.pid);
+  const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  assert(alive());
+  await app.close();
+  await eventually(() => !alive());
 });
