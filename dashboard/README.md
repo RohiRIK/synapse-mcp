@@ -20,7 +20,7 @@ This first version is **read-only**. Reconnection, cancellation, remote administ
 
 ## Enable it in three steps
 
-Requires Bun 1.3.14+, Node 22.14+, and macOS or Linux for local Unix-socket telemetry. The gateway can still run on other supported platforms with the dashboard disabled.
+Requires Bun 1.3.14+ and macOS or Linux for local Unix-socket telemetry. The gateway can still run on other supported platforms with the dashboard disabled.
 
 ### 1. Install and build the optional package
 
@@ -28,14 +28,13 @@ From the repository root:
 
 ```sh
 bun install --frozen-lockfile
-bun run build
 
 cd dashboard
 bun install --frozen-lockfile
 bun run build
 ```
 
-The dashboard has its own `package.json`, `bun.lock`, and build directory. The root package is intentionally **not** a workspace that automatically installs this package.
+The gateway loads the dashboard's telemetry agent straight from `server/agent.ts`, so it only needs `bun install` here. `bun run build` produces the browser assets the dashboard server serves. The dashboard has its own `package.json`, `bun.lock`, and build directory. The root package is intentionally **not** a workspace that automatically installs this package.
 
 ### 2. Opt in the gateways you want to see
 
@@ -48,7 +47,7 @@ MCP_DASHBOARD_ENABLED=true
 Then start the gateway from the repository root:
 
 ```sh
-node --env-file=.env dist/index.js
+bun run start
 ```
 
 For any MCP host, pass `MCP_DASHBOARD_ENABLED=true` in the gateway process's environment and restart that process. This JSON is a **Claude Desktop/Cursor-style example**; Hermes, OpenClaw, pi, custom hosts, or their MCP adapters may use a different configuration format:
@@ -57,8 +56,8 @@ For any MCP host, pass `MCP_DASHBOARD_ENABLED=true` in the gateway process's env
 {
   "mcpServers": {
     "acme-gateway": {
-      "command": "/absolute/path/to/node",
-      "args": ["/absolute/path/to/synapse-mcp/dist/index.js"],
+      "command": "/absolute/path/to/bun",
+      "args": ["--no-env-file", "/absolute/path/to/synapse-mcp/src/index.ts"],
       "env": {
         "SERVICE_AUTH_TOKEN": "replace-with-your-token",
         "TENANT_ID": "tenant-acme",
@@ -150,7 +149,7 @@ bun run test:browser
 bun audit --production
 ```
 
-`bun run test` builds the root gateway and dashboard, then checks socket permissions, bounded logs, multiple instances, malformed peers, loopback authentication, real MCP telemetry, secret exclusion, and disabled-by-default behavior. Browser tests cover the launch link, empty state, filtering, export, mobile layout, session disappearance, and stale-data warnings.
+`bun run test` builds the dashboard's browser assets, then checks socket permissions, bounded logs, multiple instances, malformed peers, loopback authentication, real MCP telemetry, secret exclusion, and disabled-by-default behavior. Browser tests cover the launch link, empty state, filtering, export, mobile layout, session disappearance, and stale-data warnings.
 
 For the full gateway-plus-dashboard verification sequence, see [smoke-test instructions](../docs/testing.md).
 
@@ -161,8 +160,8 @@ dashboard/
   src/           React interface and styles
   server/        Optional gateway agent, local discovery, loopback HTTP bridge
   shared/        Bounded telemetry schema and types
-  test/          Node integration and security tests
+  test/          Bun integration and security tests
   browser/       Playwright browser tests
   docs/          Screenshot assets
-  dist/          Generated server + browser assets (ignored)
+  dist/          Generated browser assets (ignored)
 ```

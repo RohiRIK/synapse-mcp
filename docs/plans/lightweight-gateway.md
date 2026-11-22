@@ -136,7 +136,7 @@ Control is **disabled unless explicitly enabled** in configuration. It does not 
 
 ### CLI experience
 
-Add a compiled `synapse` CLI entry point; keep the existing `dist/index.js` stdio entry point unchanged. Provide a `bun run ctl` script so local development requires no global installation.
+Add a compiled `synapse` CLI entry point; keep the existing `src/index.ts` stdio entry point unchanged. Provide a `bun run ctl` script so local development requires no global installation.
 
 ```sh
 bun run ctl sessions
@@ -187,7 +187,7 @@ External HTTP log shipping and MCP logging notifications are out of scope for V1
 | 4 | Permission-restricted local control socket and CLI | new `src/control.ts`, `src/cli.ts`, `package.json` |
 | 5 | Race/security/load tests, README diagrams, examples, reference and CLI documentation | `test/`, `README.md`, `docs/`, CI |
 
-Reuse SDK, Zod, and Node built-ins. Target **no new runtime dependencies**. Bun remains the package manager/script tool; Node remains the tested stdio runtime.
+Reuse SDK, Zod, and the Node-compatible built-ins Bun provides. Target **no new runtime dependencies**. Bun is the package manager, test runner and stdio runtime.
 
 Keep changes reviewable by phase. Do not commit unrelated generated `graphify-out/` artifacts.
 
@@ -207,7 +207,7 @@ Keep changes reviewable by phase. Do not commit unrelated generated `graphify-ou
 - [ ] Socket permissions, unsafe paths, malformed frames, stale sockets, and disconnected clients are covered.
 - [ ] Log redaction, export, rotation, file errors, dropped-event reporting, and stderr/stdout separation are covered.
 - [ ] SIGINT, SIGTERM, EOF, and operator-stop cleanup finish within the shutdown budget.
-- [ ] `bun run check` and production dependency audit pass; CI covers supported Node versions and POSIX control behavior.
+- [ ] `bun run check` and production dependency audit pass; CI covers the supported Bun version and POSIX control behavior.
 - [ ] README and diagrams match the implementation, and configuration examples validate.
 
 ## Not in this iteration

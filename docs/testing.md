@@ -4,7 +4,7 @@
 
 These checks use local mock services and the official MCP SDK client. They verify the gateway independently of any particular agent or IDE. No real service token, configured backend, or external AI account is required.
 
-Requires Bun 1.3.14+ and Node.js 22.14+. Gateway CI covers Windows, Linux, and macOS with Node 22/24. Dashboard tests additionally require macOS/Linux for Unix sockets; browser tests use Chromium. See [platform setup](platforms.md) for installation and host launch examples.
+Requires Bun 1.3.14+. The gateway CI job covers Windows, Linux, and macOS with Bun 1.3.14. Dashboard tests additionally require macOS/Linux for Unix sockets; browser tests use Chromium, and Playwright's test runner needs Node.js. See [platform setup](platforms.md) for installation and host launch examples.
 
 ## 1. Gateway: default, dashboard-free path
 
@@ -15,7 +15,7 @@ bun install --frozen-lockfile
 bun run check
 ```
 
-This builds TypeScript and runs the suite, including real stdio/SSE protocol smoke coverage:
+This type-checks the sources and tests, then runs the suite, including real stdio/SSE protocol smoke coverage:
 
 - Spawn the gateway and complete MCP initialization.
 - Discover namespaced tools across multiple services and pagination pages.
@@ -37,7 +37,7 @@ bun install --frozen-lockfile
 bun run test
 ```
 
-This script also builds the root gateway. Checks include:
+This script builds the dashboard's browser assets and runs the real gateway from `../src`. Checks include:
 
 - Dashboard disabled with the flag omitted or set to `false`: no telemetry directory/socket is created.
 - Dashboard enabled: a real gateway exposes live, read-only connection/request metadata.

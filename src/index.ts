@@ -40,13 +40,13 @@ async function main(): Promise<void> {
     if (config.dashboardEnabled) {
       try {
         // No static import: normal gateway installs never load dashboard code or dependencies.
-        const moduleUrl = new URL('../dashboard/dist/server/agent.js', import.meta.url);
+        const moduleUrl = new URL('../dashboard/server/agent.ts', import.meta.url);
         const optionalModule = await import(moduleUrl.href) as {
           startAgent(source: { inspect: () => ReturnType<DownstreamManager['inspect']>; subscribe: typeof subscribeLogs }): Promise<{ close(): Promise<void> }>;
         };
         dashboardAgent = await optionalModule.startAgent({ inspect: () => downstream.inspect(), subscribe: subscribeLogs });
       } catch {
-        log('error', 'Dashboard telemetry could not start; build dashboard/ and check its private runtime directory (macOS/Linux only)');
+        log('error', 'Dashboard telemetry could not start; run bun install in dashboard/ and check its private runtime directory (macOS/Linux only)');
         await shutdown(1);
         return;
       }

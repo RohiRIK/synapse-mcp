@@ -63,6 +63,7 @@ async function fixture() {
           return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data };
         });
         sessions.set(transport.sessionId, { server, transport });
+        req.socket.once('close', () => { void server.close(); });
         server.onclose = () => { sessions.delete(transport.sessionId); };
         await server.connect(transport);
         return;
@@ -99,7 +100,7 @@ async function gateway(services: unknown[], tenant = 'tenant-a') {
   const path = join(dir, 'config.json');
   await writeFile(path, JSON.stringify({ services }));
   const transport = new StdioClientTransport({
-    command: process.execPath, args: [resolve('dist/index.js')], stderr: 'pipe',
+    command: process.execPath, args: ['--no-env-file', resolve('src/index.ts')], stderr: 'pipe',
     env: { SERVICE_AUTH_TOKEN: token, TENANT_ID: tenant, MCP_CONFIG_PATH: path },
   });
   let stderr = '';
@@ -242,8 +243,9 @@ test('separate gateway processes keep tenant contexts isolated', { timeout: 10_0
   const b = await gateway(services, 'tenant-b');
   t.after(() => b.close());
   const results = await Promise.all([a, b].map((app) => app.client.callTool({ name: 'svc__echo', arguments: {} })));
-  assert.equal(results[0]?.structuredContent?.tenant, 'tenant-a');
-  assert.equal(results[1]?.structuredContent?.tenant, 'tenant-b');
+  const tenantOf = (result: (typeof results)[number] | undefined) => (result?.structuredContent as { tenant?: string } | undefined)?.tenant;
+  assert.equal(tenantOf(results[0]), 'tenant-a');
+  assert.equal(tenantOf(results[1]), 'tenant-b');
 });
 
 for (const signal of ['SIGINT', 'SIGTERM', 'EOF'] as const) {
@@ -259,7 +261,7 @@ for (const signal of ['SIGINT', 'SIGTERM', 'EOF'] as const) {
     t.after(() => rm(dir, { recursive: true, force: true }));
     const configPath = join(dir, 'config.json');
     await writeFile(configPath, JSON.stringify({ services: [{ name: 'svc', url: `${backend.url}/sse` }] }));
-    const child = spawn(process.execPath, [resolve('dist/index.js')], {
+    const child = spawn(process.execPath, ['--no-env-file', resolve('src/index.ts')], {
       env: { ...process.env, TENANT_ID: 'tenant-a', SERVICE_AUTH_TOKEN: token, MCP_CONFIG_PATH: configPath },
       stdio: ['pipe', 'pipe', 'pipe'],
     });

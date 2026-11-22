@@ -47,7 +47,7 @@ export type GatewayConfig = Readonly<{
   dashboardEnabled?: boolean;
 }>;
 
-export async function loadConfig(env: NodeJS.ProcessEnv = process.env): Promise<GatewayConfig> {
+export async function loadConfig(env: Record<string, string | undefined> = process.env): Promise<GatewayConfig> {
   const parsedEnv = envSchema.safeParse(env);
   if (!parsedEnv.success) {
     const fields = [...new Set(parsedEnv.error.issues.map((issue) => issue.path.join('.')))];

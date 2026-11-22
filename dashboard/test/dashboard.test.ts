@@ -176,13 +176,13 @@ test('real gateway opt-in reports live calls and never exposes tenant, credentia
   const config = join(dir, 'config.json');
   await writeFile(config, JSON.stringify({ services: [{ name: 'billing', url: service.url, timeout: 5000 }] }));
   const transport = new StdioClientTransport({
-    command: process.execPath, args: [join(root, 'dist/index.js')], stderr: 'pipe',
+    command: process.execPath, args: ['--no-env-file', join(root, 'src/index.ts')], stderr: 'pipe',
     env: {
       MCP_CONFIG_PATH: config, SERVICE_AUTH_TOKEN: 'SECRET_TOKEN', TENANT_ID: 'SECRET_TENANT',
       MCP_DASHBOARD_ENABLED: 'true', SYNAPSE_DASHBOARD_RUNTIME_DIR: dir,
     },
   });
-  transport.stderr?.resume();
+  transport.stderr?.on('data', () => {}); // Drain it so the child never blocks on a full pipe.
   const client = new Client({ name: 'dashboard-test', version: '1' });
   await client.connect(transport);
   t.after(() => client.close());
@@ -210,7 +210,7 @@ for (const setting of [undefined, 'false']) {
     const runtime = join(dir, 'must-not-exist');
     const config = join(dir, 'config.json');
     await writeFile(config, JSON.stringify({ services: [{ name: 'offline', url: 'http://127.0.0.1:1/sse', timeout: 100 }] }));
-    const child = spawn(process.execPath, [join(root, 'dist/index.js')], {
+    const child = spawn(process.execPath, ['--no-env-file', join(root, 'src/index.ts')], {
       env: {
         PATH: process.env.PATH,
         MCP_CONFIG_PATH: config, SERVICE_AUTH_TOKEN: 'SECRET_TOKEN', TENANT_ID: 'test',

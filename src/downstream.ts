@@ -50,8 +50,11 @@ async function withDeadline<T>(
   });
 }
 
+/** The plain fetch signature the SDK transports call. Bun's `typeof fetch` also carries `preconnect`. */
+export type GatewayFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
 /** Force identity on BOTH SSE GETs and message POSTs, including reconnect attempts. */
-export function createAuthenticatedFetch(config: GatewayConfig, url: URL, lifetime: AbortSignal): typeof fetch {
+export function createAuthenticatedFetch(config: GatewayConfig, url: URL, lifetime: AbortSignal): GatewayFetch {
   return async (input, init) => {
     const target = new URL(input instanceof Request ? input.url : input.toString());
     if (target.origin !== url.origin || target.username || target.password) {
