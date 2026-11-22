@@ -5,9 +5,29 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 
 const server = new Server({ name: 'stdio-fixture', version: '1' }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [{ name: 'whoami', description: 'Report identity', inputSchema: { type: 'object' } }],
+  tools: [
+    { name: 'whoami', description: 'Report identity', inputSchema: { type: 'object' } },
+    {
+      name: 'delete_thing',
+      description: 'A confirm-gated change',
+      inputSchema: { type: 'object', properties: { id: { type: 'string' }, confirm: { type: 'boolean' } } },
+    },
+  ],
 }));
+let ran = 0;
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  if (request.params.name === 'delete_thing') {
+    const args = request.params.arguments ?? {};
+    if (args.confirm !== true) {
+      const preview = { type: 'confirmation_required', action: `delete ${String(args.id)}` };
+      return {
+        content: [{ type: 'text', text: `Will delete ${String(args.id)}.\nTo proceed, the AI MUST: ask.\nIf the user says no, do NOT call the tool again.\n` }],
+        structuredContent: preview,
+      };
+    }
+    ran++;
+    return { content: [{ type: 'text', text: `deleted ${String(args.id)}` }], structuredContent: { deleted: args.id, ran } };
+  }
   const data = {
     name: request.params.name,
     args: request.params.arguments ?? {},

@@ -17,6 +17,8 @@ import {
 import { fileConfigSchema, loadConfig } from '../src/config.js';
 import { childEnvironment, createAuthenticatedFetch } from '../src/downstream.js';
 import { assertNoTenantOverride, sanitizeInputSchema } from '../src/gateway.js';
+import { CANNOT_ASK, NOT_APPROVED, isConfirmGated, previewForPerson, runApproved } from '../src/approval.js';
+import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 const token = 'test-secret-do-not-log';
 const inputSchema: Tool['inputSchema'] = {
@@ -95,7 +97,12 @@ async function fixture() {
   };
 }
 
-async function gateway(services: unknown[], tenant = 'tenant-a', env: Record<string, string> = { SERVICE_AUTH_TOKEN: token }) {
+async function gateway(
+  services: unknown[],
+  tenant = 'tenant-a',
+  env: Record<string, string> = { SERVICE_AUTH_TOKEN: token },
+  setup?: (client: Client) => void,
+) {
   const dir = await mkdtemp(join(tmpdir(), 'mcp-gateway-'));
   const path = join(dir, 'config.json');
   await writeFile(path, JSON.stringify({ services }));
@@ -105,7 +112,11 @@ async function gateway(services: unknown[], tenant = 'tenant-a', env: Record<str
   });
   let stderr = '';
   transport.stderr?.on('data', (chunk) => { stderr += chunk.toString(); });
-  const client = new Client({ name: 'test-client', version: '1' });
+  const client = new Client(
+    { name: 'test-client', version: '1' },
+    setup ? { capabilities: { elicitation: {} } } : {},
+  );
+  setup?.(client);
   try { await client.connect(transport); } catch (error) {
     await transport.close();
     await rm(dir, { recursive: true, force: true });
@@ -364,4 +375,83 @@ test('real stdio downstreams alongside SSE: routing, identity, isolation and cle
   assert(alive());
   await app.close();
   await eventually(() => !alive());
+});
+
+test('approval: unit behaviour of the confirm gate', async () => {
+  assert(isConfirmGated({ type: 'object', properties: { confirm: { type: 'boolean' } } }));
+  assert(!isConfirmGated({ type: 'object', properties: { confirm: { type: 'string' } } }));
+  assert(!isConfirmGated(undefined));
+  assert.equal(previewForPerson({ content: [{ type: 'text', text: 'Plan\nTo proceed, the AI MUST: x\nIf the user says no, do NOT call the tool again.\n' }] }).trim(), 'Plan');
+
+  const calls: Array<Record<string, unknown>> = [];
+  const preview = { content: [{ type: 'text' as const, text: 'p' }], structuredContent: { type: 'confirmation_required' } };
+  const call = async (args: Record<string, unknown>) => { calls.push(args); return args.confirm === true ? { content: [] } : preview; };
+  const run = (channel: Parameters<typeof runApproved>[0]['channel']) => runApproved({ name: 't', input: { id: 1, confirm: true }, tenant: 'x', channel, call });
+
+  calls.length = 0;
+  const blind = await run({ supportsElicitation: () => false, ask: async () => ({ action: 'accept' }) });
+  assert.equal(blind.isError, true);
+  assert.deepEqual([...calls], [{ id: 1, confirm: false }], 'no elicitation support: only the preview call');
+  calls.length = 0;
+  const throwing = await run({ supportsElicitation: () => true, ask: async () => { throw new Error('boom'); } });
+  assert.equal(throwing.isError, true);
+  assert.equal(calls.length, 1);
+  calls.length = 0;
+  const unticked = await run({ supportsElicitation: () => true, ask: async () => ({ action: 'accept', content: { approve: false } }) });
+  assert.equal(unticked.isError, true);
+  assert.equal(calls.length, 1);
+  calls.length = 0;
+  await run({ supportsElicitation: () => true, ask: async () => ({ action: 'accept', content: { approve: true } }) });
+  assert.deepEqual([...calls], [{ id: 1, confirm: false }, { id: 1, confirm: true }]);
+  // A tool with no preview step answers once, and is never called with confirm: true.
+  calls.length = 0;
+  const plain = await runApproved({
+    name: 't', input: { confirm: true }, tenant: 'x', channel: { supportsElicitation: () => true, ask: async () => ({ action: 'accept', content: { approve: true } }) },
+    call: async (args) => { calls.push(args); return { content: [{ type: 'text', text: 'done' }] }; },
+  });
+  assert.deepEqual([...calls], [{ confirm: false }]);
+  assert.equal(plain.isError, undefined);
+});
+
+test('approval: confirm: true from the model runs only after the person approves in the client', { timeout: 20_000 }, async (t) => {
+  const textOf = (result: Awaited<ReturnType<Client['callTool']>>) =>
+    (result.content as Array<{ type: string; text?: string }>).map((item) => item.text ?? '').join('');
+  const stdioOnly = {};
+  const services = [stdioService('local')];
+
+  // A client that cannot show an approval prompt: nothing runs.
+  const blind = await gateway(services, 'tenant-a', stdioOnly);
+  t.after(() => blind.close());
+  const refused = await blind.client.callTool({ name: 'local__delete_thing', arguments: { id: 'a', confirm: true } });
+  assert.equal(refused.isError, true);
+  assert.equal(textOf(refused), CANNOT_ASK);
+  // confirm: false is an ordinary call that returns the preview.
+  const preview = await blind.client.callTool({ name: 'local__delete_thing', arguments: { id: 'a', confirm: false } });
+  assert.deepEqual(preview.structuredContent, { type: 'confirmation_required', action: 'delete a' });
+
+  // A person who declines: nothing runs. One who approves: it runs once.
+  let answer: 'decline' | 'approve' = 'decline';
+  const prompts: string[] = [];
+  const app = await gateway(services, 'tenant-a', stdioOnly, (client) => {
+    client.setRequestHandler(ElicitRequestSchema, async (request) => {
+      prompts.push(String(request.params.message));
+      return answer === 'approve' ? { action: 'accept', content: { approve: true } } : { action: 'decline' };
+    });
+  });
+  t.after(() => app.close());
+  const declined = await app.client.callTool({ name: 'local__delete_thing', arguments: { id: 'b', confirm: true } });
+  assert.equal(textOf(declined), NOT_APPROVED);
+  assert.equal(prompts.length, 1);
+  assert(prompts[0]?.startsWith('Approve local__delete_thing in tenant tenant-a?'));
+  assert(prompts[0]?.includes('Will delete b.'));
+  assert(!prompts[0]?.includes('the AI MUST'), 'instructions to the model are not shown to the person');
+
+  answer = 'approve';
+  const approved = await app.client.callTool({ name: 'local__delete_thing', arguments: { id: 'c', confirm: true } });
+  assert.deepEqual(approved.structuredContent, { deleted: 'c', ran: 1 }, 'the declined call never ran');
+  assert.equal(prompts.length, 2);
+
+  // Tools without a confirm flag are never gated.
+  await app.client.callTool({ name: 'local__whoami', arguments: { confirm: true } });
+  assert.equal(prompts.length, 2);
 });
