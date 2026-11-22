@@ -1,0 +1,68 @@
+{
+  "signIn": {
+    "clientId": "wellknown",
+    "sessionMaxAgeHours": 8
+  },
+  "services": [
+    {
+      "name": "entra",
+      "transport": "stdio",
+      "command": "/absolute/path/to/bun",
+      "args": [
+        "--no-env-file",
+        "/absolute/path/to/microsoft-graph-mcp-servers/entra_id_mcp/src/index.ts"
+      ],
+      "cwd": "/absolute/path/to/microsoft-graph-mcp-servers",
+      "signIn": true,
+      "timeout": 30000
+    },
+    {
+      "name": "intune",
+      "transport": "stdio",
+      "command": "/absolute/path/to/bun",
+      "args": [
+        "--no-env-file",
+        "/absolute/path/to/microsoft-graph-mcp-servers/intune_mcp/src/index.ts"
+      ],
+      "cwd": "/absolute/path/to/microsoft-graph-mcp-servers",
+      "signIn": true,
+      "timeout": 30000
+    },
+    {
+      "name": "exchange",
+      "transport": "stdio",
+      "command": "/absolute/path/to/bun",
+      "args": [
+        "--no-env-file",
+        "/absolute/path/to/microsoft-graph-mcp-servers/exchange_online_mcp/src/index.ts"
+      ],
+      "cwd": "/absolute/path/to/microsoft-graph-mcp-servers",
+      "signIn": true,
+      "timeout": 30000
+    },
+    {
+      "name": "defender",
+      "transport": "stdio",
+      "command": "/absolute/path/to/bun",
+      "args": [
+        "--no-env-file",
+        "/absolute/path/to/microsoft-graph-mcp-servers/defender_mcp/src/index.ts"
+      ],
+      "cwd": "/absolute/path/to/microsoft-graph-mcp-servers",
+      "signIn": true,
+      "timeout": 30000
+    },
+    {
+      "name": "purview",
+      "transport": "stdio",
+      "command": "/absolute/path/to/bun",
+      "args": [
+        "--no-env-file",
+        "/absolute/path/to/microsoft-graph-mcp-servers/purview_mcp/src/index.ts"
+      ],
+      "cwd": "/absolute/path/to/microsoft-graph-mcp-servers",
+      "signIn": true,
+      "timeout": 30000
+    }
+  ]
+}

@@ -154,3 +154,11 @@ test('sign-in: a real stdio plane borrows tokens over its pipe, and only signed-
   }
   assert.equal(readMsal.accounts.length, 0, 'closing the gateway forgets the account');
 });
+
+test('sign-in: the Microsoft Graph example config is valid as shipped', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const parsed = fileConfigSchema.safeParse(JSON.parse(await readFile(resolve('examples/microsoft-graph.config.json'), 'utf8')));
+  assert(parsed.success);
+  assert.deepEqual(parsed.data.services.map((service) => service.name), ['entra', 'intune', 'exchange', 'defender', 'purview']);
+  assert(parsed.data.services.every((service) => service.transport === 'stdio' && service.signIn));
+});
