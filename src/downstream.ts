@@ -12,7 +12,17 @@ import {
   type CallToolResult,
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
 import type { GatewayConfig, ServiceConfig, SseServiceConfig, StdioServiceConfig } from './config.js';
+import {
+  answerTokenRequest, type BrokerSessions, EXPECTED_TENANT_ENV, SIGN_OUT_METHOD, signOutAll, TOKEN_BROKER_ENV, TOKEN_METHOD,
+} from './signin.js';
+
+const tokenRequestSchema = z.object({
+  method: z.literal(TOKEN_METHOD),
+  params: z.object({ scopes: z.array(z.string()).max(100), access: z.enum(['read', 'write']).optional() }).passthrough(),
+});
+const signOutRequestSchema = z.object({ method: z.literal(SIGN_OUT_METHOD), params: z.object({}).passthrough().optional() });
 
 type LogEvent = { time: string; level: 'info' | 'warn' | 'error'; message: string; service?: string };
 const logListeners = new Set<(event: LogEvent) => void>();
@@ -84,6 +94,8 @@ export function createAuthenticatedFetch(config: GatewayConfig, url: URL, lifeti
  * The environment a stdio service starts with: the SDK's minimal safe set (PATH, HOME, USER,
  * SHELL, TERM, LOGNAME and their Windows equivalents), the service's own `env`, then the
  * gateway's identity, which config cannot override. SERVICE_AUTH_TOKEN is never passed.
+ * A service with `signIn: true` is also told to borrow tokens from this process and which
+ * tenant it must be configured for (it refuses to start for any other).
  */
 export function childEnvironment(
   service: StdioServiceConfig,
@@ -95,6 +107,7 @@ export function childEnvironment(
     ...service.env,
     SYNAPSE_TENANT_ID: tenantId,
     SYNAPSE_SERVICE_NAME: service.name,
+    ...(service.signIn ? { [TOKEN_BROKER_ENV]: '1', [EXPECTED_TENANT_ENV]: tenantId } : {}),
   };
 }
 
@@ -149,8 +162,13 @@ export class DownstreamManager {
   private completedCalls = 0;
   private failedCalls = 0;
   onToolsChanged: () => void = () => {};
+  private sessions: Promise<BrokerSessions> | undefined;
 
-  constructor(config: GatewayConfig) {
+  /**
+   * `signIn` builds the Microsoft sign-in sessions on first use. Injected so tests can lend
+   * fake tokens; by default it is the real MSAL session from src/signin.ts.
+   */
+  constructor(config: GatewayConfig, private readonly signIn?: () => Promise<BrokerSessions>) {
     this.observing = config.dashboardEnabled === true;
     for (const service of config.services) {
       const abort = new AbortController();
@@ -166,8 +184,29 @@ export class DownstreamManager {
       client.onerror = () => this.unavailable(connection);
       client.onclose = () => this.unavailable(connection);
       client.setNotificationHandler(ToolListChangedNotificationSchema, () => this.refresh(connection));
+      if (service.transport === 'stdio' && service.signIn) {
+        client.setRequestHandler(tokenRequestSchema, async (request) => {
+          try {
+            const token = await answerTokenRequest(await this.signInSessions(), request.params);
+            return { accessToken: token.accessToken, expiresOn: token.expiresOn };
+          } catch (error) {
+            // Our own refusal or MSAL's message; never a token.
+            throw new McpError(-32000, error instanceof Error ? error.message : 'Token broker failed.');
+          }
+        });
+        client.setRequestHandler(signOutRequestSchema, async () => {
+          if (this.sessions) await signOutAll(await this.sessions);
+          return {};
+        });
+      }
       this.connections.set(service.name, connection);
     }
+  }
+
+  private signInSessions(): Promise<BrokerSessions> {
+    if (!this.signIn) return Promise.reject(new Error('This gateway has no signIn configuration.'));
+    this.sessions ??= this.signIn();
+    return this.sessions;
   }
 
   start(): Promise<void> {
@@ -275,6 +314,16 @@ export class DownstreamManager {
     if (!connection.tools.some((tool) => tool.name === params.name)) {
       throw new McpError(ErrorCode.MethodNotFound, 'Unknown downstream tool');
     }
+    if (connection.config.transport === 'stdio' && connection.config.signIn) {
+      // Open the browser before the call's deadline starts, not inside it.
+      try {
+        await (await this.signInSessions()).read.ensureSignedIn();
+      } catch (error) {
+        throw new McpError(ErrorCode.InternalError,
+          `Microsoft sign-in did not complete, so nothing ran: ${error instanceof Error ? error.message : 'unknown error'}`);
+      }
+      if (connection.status !== 'ready') throw new McpError(ErrorCode.InternalError, 'Downstream service unavailable');
+    }
     const requestId = this.observing && this.requests.size < 128 ? randomUUID() : undefined;
     connection.activeRequests++;
     connection.lastActivityAt = new Date().toISOString();
@@ -338,6 +387,7 @@ export class DownstreamManager {
 
   async close(): Promise<void> {
     this.stopped = true;
+    if (this.sessions) await this.sessions.then(signOutAll).catch(() => {});
     await Promise.allSettled([...this.connections.values()].map((connection) => this.closeConnection(connection)));
   }
 }

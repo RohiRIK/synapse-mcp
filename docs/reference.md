@@ -47,6 +47,27 @@ Use an absolute configuration path in MCP hosts. The environment and config file
 
 Use your system's trusted CA configuration for internal TLS. Do not disable certificate validation.
 
+### Microsoft sign-in for Graph planes
+
+A top-level `signIn` block gives the gateway one interactive Microsoft sign-in, which it lends to every stdio service marked `"signIn": true`:
+
+```json
+{
+  "signIn": { "clientId": "wellknown", "sessionMaxAgeHours": 8 },
+  "services": [
+    { "name": "entra", "transport": "stdio", "command": "/abs/bun", "args": ["--no-env-file", "/abs/entra_id_mcp/src/index.ts"], "signIn": true, "timeout": 30000 }
+  ]
+}
+```
+
+- `TENANT_ID` must then be the directory's GUID. The session is bound to it: an account from any other directory is dropped as soon as the sign-in returns, and nothing is kept.
+- `clientId` is an app registration's GUID, or `wellknown` for Microsoft Graph Command Line Tools. `writeClientId` (optional) is a second registration consented for writes. It signs in only when a write first asks for a token, and its session lasts at most 15 minutes. It must differ from `clientId`.
+- `sessionMaxAgeHours` (0.25–24, default 8): after this, the next call signs in again.
+- Everything is in memory. No token cache is written, and the sign-in ends when the gateway does, so an earlier session can never answer for this one.
+- A signed-in child gets `MCP_GRAPH_TOKEN_BROKER=1` and `GATEWAY_EXPECTED_TENANT_ID=<TENANT_ID>`, which config `env` cannot set. It asks for tokens with the JSON-RPC request `x-mcp-graph/token` over its stdio pipe; the contract is `mcp_shared/src/token-broker.ts` in microsoft-graph-mcp-servers. Only Microsoft Graph delegated scopes are lent; `.default` and other audiences are refused. Services without `signIn` cannot borrow a token.
+- The browser opens before the first call to a signed-in service starts its timeout, not during it. No browser opens until then.
+- A sign-in is not an approval: confirm-gated tools still need the person's approval in the client.
+
 ### Environment files and dependencies
 
 Bun loads a `.env` from the working directory by default. `bun run start` relies on that for local use. Host launches pass `--no-env-file` so that only the environment the host supplies is used.

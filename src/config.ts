@@ -23,8 +23,10 @@ const sseServiceSchema = z.object({
   timeout: serviceTimeout,
 }).strict();
 
-/** Variables a stdio service may never set: they carry the gateway's own identity. */
-export const RESERVED_CHILD_ENV = ['SYNAPSE_TENANT_ID', 'SYNAPSE_SERVICE_NAME'] as const;
+/** Variables a stdio service may never set: they carry the gateway's own identity and sign-in. */
+export const RESERVED_CHILD_ENV = [
+  'SYNAPSE_TENANT_ID', 'SYNAPSE_SERVICE_NAME', 'MCP_GRAPH_TOKEN_BROKER', 'GATEWAY_EXPECTED_TENANT_ID',
+] as const;
 
 /**
  * A local MCP server the gateway starts as a child process and speaks to over its stdin/stdout.
@@ -39,17 +41,41 @@ const stdioServiceSchema = z.object({
   env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).max(128), z.string().max(8192))
     .refine((env) => Object.keys(env).length <= 64, 'At most 64 variables')
     .refine((env) => !Object.keys(env).some((key) => (RESERVED_CHILD_ENV as readonly string[]).includes(key)),
-      'SYNAPSE_TENANT_ID and SYNAPSE_SERVICE_NAME are set by the gateway')
+      `${RESERVED_CHILD_ENV.join(', ')} are set by the gateway`)
     .default({}),
   cwd: z.string().min(1).max(4096).optional(),
+  // Lend this child the gateway's Microsoft sign-in (see signIn below and src/signin.ts).
+  signIn: z.boolean().default(false),
   timeout: serviceTimeout,
 }).strict();
+
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * One interactive Microsoft sign-in, in memory only, bound to TENANT_ID (which must then be the
+ * directory's GUID) and lent to stdio services with `signIn: true`.
+ */
+const signInSchema = z.object({
+  clientId: z.string().regex(/^(?:wellknown|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/),
+  // A second app registration consented for writes, signed in only when a write needs it.
+  writeClientId: z.string().regex(GUID).optional(),
+  sessionMaxAgeHours: z.number().min(0.25).max(24).default(8),
+}).strict().refine(
+  (value) => value.writeClientId === undefined || value.writeClientId.toLowerCase() !== value.clientId.toLowerCase(),
+  { message: 'writeClientId must differ from clientId', path: ['writeClientId'] },
+);
 
 const serviceSchema = z.union([stdioServiceSchema, sseServiceSchema]);
 
 export const fileConfigSchema = z.object({
+  signIn: signInSchema.optional(),
   services: z.array(serviceSchema).min(1).max(64),
-}).strict().superRefine(({ services }, ctx) => {
+}).strict().superRefine(({ services, signIn }, ctx) => {
+  services.forEach((service, index) => {
+    if (service.transport === 'stdio' && service.signIn && signIn === undefined) {
+      ctx.addIssue({ code: 'custom', path: ['services', index, 'signIn'], message: 'Needs a top-level signIn block' });
+    }
+  });
   const names = new Set<string>();
   services.forEach((service, index) => {
     if (names.has(service.name)) {
@@ -71,7 +97,9 @@ const envSchema = z.object({
 export type ServiceConfig = Readonly<z.infer<typeof serviceSchema>>;
 export type SseServiceConfig = Readonly<z.infer<typeof sseServiceSchema>>;
 export type StdioServiceConfig = Readonly<z.infer<typeof stdioServiceSchema>>;
+export type SignInConfig = Readonly<z.infer<typeof signInSchema>>;
 export type GatewayConfig = Readonly<{
+  signIn?: SignInConfig | undefined;
   /** Empty when only stdio services are configured. */
   serviceAuthToken: string;
   tenantId: string;
@@ -101,7 +129,11 @@ export async function loadConfig(env: Record<string, string | undefined> = proce
   if (needsToken && parsedEnv.data.SERVICE_AUTH_TOKEN === undefined) {
     throw new Error('Invalid or missing environment variables: SERVICE_AUTH_TOKEN (required for SSE services)');
   }
+  if (parsedFile.data.signIn && !GUID.test(parsedEnv.data.TENANT_ID)) {
+    throw new Error('Invalid or missing environment variables: TENANT_ID (signIn needs the directory GUID)');
+  }
   return Object.freeze({
+    signIn: parsedFile.data.signIn ? Object.freeze(parsedFile.data.signIn) : undefined,
     serviceAuthToken: parsedEnv.data.SERVICE_AUTH_TOKEN ?? '',
     tenantId: parsedEnv.data.TENANT_ID,
     dashboardEnabled: parsedEnv.data.MCP_DASHBOARD_ENABLED,

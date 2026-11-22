@@ -336,7 +336,7 @@ test('stdio services: config validation', async () => {
 
 test('stdio child environment: minimal inheritance, fixed identity, never the service token', () => {
   const env = childEnvironment(
-    { name: 'svc', transport: 'stdio', command: 'x', args: [], env: { EXTRA: '1' }, timeout: 1000 },
+    { name: 'svc', transport: 'stdio', command: 'x', args: [], env: { EXTRA: '1' }, signIn: false, timeout: 1000 },
     'tenant-a',
     { PATH: '/bin', HOME: '/home/u' },
   );
