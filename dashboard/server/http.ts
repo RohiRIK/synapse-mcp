@@ -15,7 +15,7 @@ function authorized(request: IncomingMessage, token: string): boolean {
 
 export async function startDashboard(options: { port?: number; directory?: string; clientDir?: string } = {}) {
   const directory = await runtimeDirectory(options.directory);
-  const clientDir = options.clientDir ?? fileURLToPath(new URL('../client/', import.meta.url));
+  const clientDir = options.clientDir ?? fileURLToPath(new URL('../dist/client/', import.meta.url));
   const index = await readFile(join(clientDir, 'index.html')); // Fail clearly before listening if not built.
   const token = randomBytes(32).toString('base64url');
   let origin = '';

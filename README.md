@@ -26,7 +26,7 @@ The model chooses a tool. **It does not choose the tenant.** That identity comes
 - **One tool list:** discover tools from all configured services in parallel.
 - **No name collisions between services:** every tool gets a service prefix.
 - **Partial-failure support:** if billing is offline, CRM can still work.
-- **Bun-first development:** install, build, and test with Bun; run the MCP process with Node.
+- **Runs on Bun:** install, test, and run the MCP process with Bun. There is no build step and no Node runtime.
 
 > [!NOTE]
 > This is a **tools-only, stdio-to-SSE template** built with the official [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk). It does not proxy resources or prompts. The SDK recommends Streamable HTTP for new services; this project currently connects to SSE endpoints. `/mcp` and `/sse` are not interchangeable.
@@ -43,19 +43,19 @@ The dashboard's HTTP server is for the browser UI only. It is **not** an MCP end
 
 ## Get started
 
-You'll need **Bun 1.3.14+**, **Node.js 22.14+**, and at least one downstream MCP server with an SSE endpoint. The example billing and CRM services are not included.
+You'll need **Bun 1.3.14+** and at least one downstream MCP server with an SSE endpoint. The example billing and CRM services are not included.
 
 ### Platform support
 
 | Platform | Gateway (dashboard disabled) | Optional local dashboard |
 | --- | --- | --- |
-| macOS | Tested in CI on Node 22/24 | Supported |
-| Linux | Tested in CI on Node 22/24 | Supported |
-| Windows | Tested in CI on Node 22/24 | **Not supported natively**—keep `MCP_DASHBOARD_ENABLED=false` |
+| macOS | CI job on Bun 1.3.14 | Supported |
+| Linux | CI job on Bun 1.3.14; suite also run locally on Bun 1.4.4 | Supported |
+| Windows | CI job on Bun 1.3.14 | **Not supported natively**—keep `MCP_DASHBOARD_ENABLED=false` |
 
 See the **[Windows / Linux / macOS setup guide](docs/platforms.md)** for host configuration examples and OS-specific notes. Check the current [CI results](https://github.com/RohiRIK/synapse-mcp/actions/workflows/ci.yml) before rolling out a revision. Windows uses stdin EOF for tested graceful cleanup; its forced process termination is not equivalent to POSIX signals. Named AI-host integrations and your own backend authorization still need a local acceptance check.
 
-For a team handoff, start with a **small pilot**, not an unattended production rollout. Every user needs Node, Bun, a compatible MCP stdio host/integration, and authorized credentials for configured **SSE** backends. Downstream Streamable HTTP servers are not supported yet.
+For a team handoff, start with a **small pilot**, not an unattended production rollout. Every user needs Bun, a compatible MCP stdio host/integration, and authorized credentials for configured **SSE** backends. Downstream Streamable HTTP servers are not supported yet.
 
 ### 1. Install
 
@@ -66,7 +66,7 @@ bun install --frozen-lockfile
 cp .env.example .env
 ```
 
-On Windows PowerShell, use `Copy-Item .env.example .env` for the last step. The Bun commands are the same. Use `(Get-Command node).Source` to locate Node; in JSON, escape backslashes (`C:\\Path` becomes `"C:\\\\Path"`) or use forward slashes in absolute paths.
+On Windows PowerShell, use `Copy-Item .env.example .env` for the last step. The Bun commands are the same. Use `(Get-Command bun).Source` to locate Bun; in JSON, escape backslashes (`C:\\Path` becomes `"C:\\\\Path"`) or use forward slashes in absolute paths.
 
 ### 2. Set your identity
 
@@ -103,16 +103,12 @@ Edit `config.json` to point at your actual SSE endpoints:
 
 `timeout` is in milliseconds. Use **HTTPS** outside loopback development addresses. Only configure trusted services: every listed endpoint receives the process's token and tenant ID.
 
-### 4. Build
+### 4. Check it starts
+
+There is nothing to build: Bun runs the TypeScript sources directly. You're ready to connect an AI client below. For a local startup check, you can also run:
 
 ```sh
-bun run build
-```
-
-You're ready to connect an AI client below. For a local startup check, you can also run:
-
-```sh
-node --env-file=.env dist/index.js
+bun run start
 ```
 
 **A quiet terminal is normal.** This process waits for MCP messages on stdin; it isn't a chat interface or web server. Logs go to stderr. Press `Ctrl+C` to stop it.
@@ -125,7 +121,7 @@ Synapse does not select, authenticate, or route differently based on the client 
 
 | Your host supports | How to connect |
 | --- | --- |
-| Launching an MCP stdio server | Launch `node /absolute/path/to/synapse-mcp/dist/index.js` with the gateway environment variables |
+| Launching an MCP stdio server | Launch `bun --no-env-file /absolute/path/to/synapse-mcp/src/index.ts` with the gateway environment variables |
 | MCP through a plugin, extension, or bridge | Configure that integration to launch the same stdio command |
 | Only remote HTTP MCP endpoints | An upstream Streamable HTTP server mode is still needed; it is not implemented yet |
 | No MCP integration | Add an MCP client adapter first; Synapse cannot connect through a proprietary tool protocol automatically |
@@ -142,8 +138,8 @@ These are configuration examples, not a restriction on supported clients. Add th
 {
   "mcpServers": {
     "acme-gateway": {
-      "command": "/absolute/path/to/node",
-      "args": ["/absolute/path/to/synapse-mcp/dist/index.js"],
+      "command": "/absolute/path/to/bun",
+      "args": ["--no-env-file", "/absolute/path/to/synapse-mcp/src/index.ts"],
       "env": {
         "SERVICE_AUTH_TOKEN": "replace-with-acme-service-token",
         "TENANT_ID": "tenant-acme",
@@ -158,8 +154,9 @@ Restart your client after saving. When the downstream services are available, yo
 
 **Two easy-to-miss details:**
 
-- Use absolute paths. Desktop clients may not start in your project directory. On macOS/Linux, `command -v node` helps locate your Node executable.
-- Launch Node directly, not `bun run start` or another package-manager wrapper. Keep script banners out of the MCP stdio channel. The host configuration above supplies the environment; it doesn't rely on your local `.env`.
+- Use absolute paths. Desktop clients may not start in your project directory. On macOS/Linux, `command -v bun` helps locate your Bun executable.
+- Launch `bun` on `src/index.ts` directly, not `bun run start` or another package-manager wrapper. Keep script banners out of the MCP stdio channel.
+- Keep `--no-env-file`. Bun otherwise loads any `.env` in the host's working directory, which could replace the identity the host configuration supplies.
 
 ## Multiple tenants
 
@@ -196,7 +193,7 @@ It shows opted-in local gateway sessions, MCP connection status, active requests
 # One-time optional setup
 cd dashboard
 bun install --frozen-lockfile
-bun run build
+bun run build   # builds the browser assets
 ```
 
 Add `MCP_DASHBOARD_ENABLED=true` to the environment of each gateway you want to inspect, then restart those gateways. In a **separate terminal**, run `bun run start` from `dashboard/` and open the private localhost link it prints.
@@ -209,19 +206,20 @@ To disable it, stop the dashboard, set `MCP_DASHBOARD_ENABLED=false` (or remove 
 
 | Command | What it does |
 | --- | --- |
-| `bun run dev` | Run the TypeScript entry point through `tsx` |
-| `bun run build` | Compile TypeScript into `dist/` |
-| `bun run start` | Run the compiled gateway with Node |
-| `bun run test` | Build and run unit + real stdio/SSE integration tests |
+| `bun run start` | Run the gateway (loads `.env` for local use) |
+| `bun run dev` | Run the gateway and restart it when a source file changes |
+| `bun run typecheck` | Type-check sources and tests with `tsc` |
+| `bun run test` | Run unit + real stdio/SSE integration tests |
+| `bun run check` | Type-check, then test |
 | `bun audit --production` | Check production dependencies for known vulnerabilities |
 
-Use **`bun run test`**, not `bun test`: the script uses Node's test runner to exercise the gateway's stdio runtime. Tests start their own local mock services; no external credentials are needed.
+Use **`bun run test`** rather than a bare `bun test`: the script limits the run to `test/`, so the dashboard's suites (which need a build) are not picked up. Tests start their own local mock services and launch the gateway as a real Bun subprocess; no external credentials are needed.
 
-Bun scripts load `.env` automatically. Direct Node launches need `--env-file` or environment variables supplied by the host.
+`bun run start` loads `.env` automatically. Host launches pass `--no-env-file` and supply the environment themselves.
 
 ## Verify your setup
 
-From the repository root, run `bun run check`. It builds the gateway and tests real MCP initialization, tool discovery/calls, tenant isolation, partial outages, and shutdown using an SDK client—not a specific AI product.
+From the repository root, run `bun run check`. It type-checks the gateway and tests real MCP initialization, tool discovery/calls, tenant isolation, partial outages, and shutdown using an SDK client—not a specific AI product.
 
 The optional dashboard has separate integration and browser checks. See **[smoke-test instructions](docs/testing.md)** for the complete commands and what they verify.
 

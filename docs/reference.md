@@ -12,8 +12,8 @@ Configure the host's stdio integration with:
 
 | Setting | Value |
 | --- | --- |
-| Executable | Absolute path to `node` |
-| Arguments | Absolute path to this repository's `dist/index.js` |
+| Executable | Absolute path to `bun` |
+| Arguments | `--no-env-file`, then the absolute path to this repository's `src/index.ts` |
 | Environment | `SERVICE_AUTH_TOKEN`, `TENANT_ID`, and an absolute `MCP_CONFIG_PATH` |
 | Optional telemetry | `MCP_DASHBOARD_ENABLED=true` only when the dashboard package is built and wanted |
 
@@ -46,7 +46,7 @@ Use your system's trusted CA configuration for internal TLS. Do not disable cert
 
 ### Environment files and dependencies
 
-The gateway itself does not load `.env`. Bun scripts inherit Bun's automatic `.env` loading; direct Node launches require `--env-file` or host-injected environment variables.
+Bun loads a `.env` from the working directory by default. `bun run start` relies on that for local use. Host launches pass `--no-env-file` so that only the environment the host supplies is used.
 
 `.env` and `config.local.json` are ignored by Git. Never commit real secrets, and restrict access to desktop host configuration files containing tokens. Commit `bun.lock` and install with `bun install --frozen-lockfile` for reproducible dependency resolution.
 
@@ -117,8 +117,8 @@ Run one process per tenant, with separate environment and appropriately scoped c
 {
   "mcpServers": {
     "acme-gateway": {
-      "command": "/absolute/path/to/node",
-      "args": ["/absolute/path/to/synapse-mcp/dist/index.js"],
+      "command": "/absolute/path/to/bun",
+      "args": ["--no-env-file", "/absolute/path/to/synapse-mcp/src/index.ts"],
       "env": {
         "SERVICE_AUTH_TOKEN": "replace-with-acme-token",
         "TENANT_ID": "tenant-acme",
@@ -126,8 +126,8 @@ Run one process per tenant, with separate environment and appropriately scoped c
       }
     },
     "globex-gateway": {
-      "command": "/absolute/path/to/node",
-      "args": ["/absolute/path/to/synapse-mcp/dist/index.js"],
+      "command": "/absolute/path/to/bun",
+      "args": ["--no-env-file", "/absolute/path/to/synapse-mcp/src/index.ts"],
       "env": {
         "SERVICE_AUTH_TOKEN": "replace-with-globex-token",
         "TENANT_ID": "tenant-globex",
@@ -185,6 +185,6 @@ bun run test
 bun audit --production
 ```
 
-The test script builds the project, then uses Node's test runner with local mock SSE servers and real subprocess stdio clients. It covers header injection, redirect rejection, tenant isolation and override rejection, pagination, partial and total outages, stalled connection deadlines, tool errors and timeouts, live discovery updates, and signal/EOF cleanup.
+The test script runs `bun test` with local mock SSE servers and real subprocess stdio clients that launch the gateway under Bun. It covers header injection, redirect rejection, tenant isolation and override rejection, pagination, partial and total outages, stalled connection deadlines, tool errors and timeouts, live discovery updates, and signal/EOF cleanup.
 
 No external services or credentials are required. Use `bun run test`, not Bun's separate `bun test` runner. These are protocol-level tests, not a claim that every named AI host has been tested. For gateway and optional dashboard smoke-test commands, see [testing and verification](testing.md).

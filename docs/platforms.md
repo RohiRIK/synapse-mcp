@@ -2,7 +2,7 @@
 
 [← Back to the README](../README.md)
 
-Synapse's **core gateway is tested in CI on Windows, Linux, and macOS**, with Node.js 22 and 24. The optional dashboard is a separate capability: it currently supports macOS/Linux only.
+Synapse's **core gateway runs on Bun**, and its CI job covers Windows, Linux, and macOS with Bun 1.3.14. The optional dashboard is a separate capability: it currently supports macOS/Linux only.
 
 Check the [latest CI results](https://github.com/RohiRIK/synapse-mcp/actions/workflows/ci.yml) for the revision you intend to deploy. These are SDK-based protocol tests, not certification of every AI host or production backend.
 
@@ -11,7 +11,7 @@ Check the [latest CI results](https://github.com/RohiRIK/synapse-mcp/actions/wor
 | Layer | What matters |
 | --- | --- |
 | Your AI host / MCP adapter | Must be able to launch a standard MCP stdio server; keep using its existing OS-specific launch support |
-| Synapse gateway | Node executable path, environment variables, filesystem paths, and process lifecycle |
+| Synapse gateway | Bun executable path, environment variables, filesystem paths, and process lifecycle |
 | Your downstream MCP services | Reachable **SSE** endpoints, TLS trust, and valid authentication—not which OS hosts them |
 | Optional dashboard | Local Unix sockets and POSIX permissions; native Windows support is not implemented |
 
@@ -21,7 +21,7 @@ The SDK's stdio client already uses cross-platform process spawning and Windows-
 
 ## Before sharing with colleagues
 
-1. Install **Bun 1.3.14+** and **Node.js 22.14+**. Node 22/24 are the CI-tested major versions.
+1. Install **Bun 1.3.14+**. Node.js is not needed.
 2. Make sure their AI host has an MCP **stdio** integration or adapter.
 3. Provide actual SSE service URLs and an appropriately scoped token/tenant through a secure channel. The checked-in billing/CRM URLs are examples, not bundled services.
 4. Keep `MCP_DASHBOARD_ENABLED=false` for the initial gateway setup.
@@ -37,17 +37,16 @@ Set-Location synapse-mcp
 bun install --frozen-lockfile
 Copy-Item .env.example .env
 # Edit .env and config.json for your authorized test backend.
-bun run build
 bun run check
-node --env-file=.env dist/index.js
+bun run start
 ```
 
 The last command is a startup check: the process waits for MCP messages on stdin. It is not a chat interface. Normally your MCP host launches it instead.
 
-Find the Node executable with:
+Find the Bun executable with:
 
 ```powershell
-(Get-Command node).Source
+(Get-Command bun).Source
 ```
 
 For a host that accepts a `mcpServers` map, a Windows launch configuration can look like this:
@@ -56,8 +55,8 @@ For a host that accepts a `mcpServers` map, a Windows launch configuration can l
 {
   "mcpServers": {
     "synapse": {
-      "command": "C:/Program Files/nodejs/node.exe",
-      "args": ["C:/Projects/synapse-mcp/dist/index.js"],
+      "command": "C:/Users/you/.bun/bin/bun.exe",
+      "args": ["--no-env-file", "C:/Projects/synapse-mcp/src/index.ts"],
       "env": {
         "SERVICE_AUTH_TOKEN": "replace-with-your-token",
         "TENANT_ID": "tenant-acme",
@@ -83,12 +82,11 @@ cd synapse-mcp
 bun install --frozen-lockfile
 cp .env.example .env
 # Edit .env and config.json for your authorized test backend.
-bun run build
 bun run check
-node --env-file=.env dist/index.js
+bun run start
 ```
 
-Use `command -v node` to locate the executable. In your MCP host, configure that absolute path plus the absolute path to `dist/index.js`, and supply the gateway environment variables directly. Do not assume a desktop host inherits the environment from your interactive shell.
+Use `command -v bun` to locate the executable. In your MCP host, configure that absolute path, then `--no-env-file` and the absolute path to `src/index.ts` as arguments, and supply the gateway environment variables directly. Do not assume a desktop host inherits the environment from your interactive shell.
 
 The optional dashboard can be installed separately by following [its setup guide](../dashboard/README.md). Enable telemetry only on the gateway processes you intend to inspect. Dashboard and gateway processes must run as the same OS user and use the same private runtime directory.
 
@@ -97,14 +95,14 @@ The optional dashboard can be installed separately by following [its setup guide
 - `127.0.0.1` means the machine/network namespace running the gateway. It does not refer to your colleague's machine, a remote service host, or a container's host automatically.
 - Use **HTTPS** for non-loopback endpoints. Remote plain HTTP URLs are intentionally rejected.
 - Supply the final SSE URL. Redirects and cross-origin message endpoints are blocked to protect credentials.
-- If services use a private certificate authority, configure trusted certificates for Node, for example through an appropriate `NODE_EXTRA_CA_CERTS` PEM file at process startup. Never disable TLS verification.
+- If services use a private certificate authority, configure trusted certificates for Bun, for example through an appropriate `NODE_EXTRA_CA_CERTS` PEM file at process startup (Bun reads the same variable). Never disable TLS verification.
 - Verify DNS, firewall rules, VPN/proxy routing, and token authorization from the machine actually running the gateway.
 - A backend exposing only Streamable HTTP at `/mcp` cannot yet replace an SSE endpoint. HTTP upstream/downstream support is still planned.
 - The dashboard URL is for a browser, not for connecting MCP clients.
 
 ## Verification scope
 
-Gateway CI runs Node 22/24 across `ubuntu-latest`, `windows-latest`, and `macos-latest`. The suite tests initialization, aggregation/routing, header injection, tenant rejection, outages, timeouts, tool-list updates, and EOF cleanup. POSIX signal tests also run on Linux/macOS.
+The gateway CI job runs Bun 1.3.14 on `ubuntu-latest`, `windows-latest`, and `macos-latest`. The suite tests initialization, aggregation/routing, header injection, tenant rejection, outages, timeouts, tool-list updates, and EOF cleanup. POSIX signal tests also run on Linux/macOS.
 
 Dashboard integration and browser checks run separately on Linux CI; macOS is additionally covered by local testing. There is no native Windows dashboard claim.
 
