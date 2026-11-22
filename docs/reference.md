@@ -25,7 +25,7 @@ Both client-facing and downstream Streamable HTTP support remain planned. The op
 
 | Environment variable | Required | Meaning |
 | --- | --- | --- |
-| `SERVICE_AUTH_TOKEN` | Yes | Nonempty, header-safe bearer token; no `Bearer ` prefix |
+| `SERVICE_AUTH_TOKEN` | When any SSE service is configured | Nonempty, header-safe bearer token; no `Bearer ` prefix. Never passed to stdio services. |
 | `TENANT_ID` | Yes | Immutable identity, 1–128 letters/digits/dots/underscores/hyphens; starts with a letter or digit |
 | `MCP_CONFIG_PATH` | No | JSON configuration path; defaults to `config.json` relative to the working directory |
 | `MCP_DASHBOARD_ENABLED` | No | Strict `true` or `false`; defaults to `false`. Enables the optional local read-only telemetry agent, not an HTTP listener. Requires `dashboard/` to be built. |
@@ -35,11 +35,14 @@ Use an absolute configuration path in MCP hosts. The environment and config file
 ### Service configuration rules
 
 - `services` contains **1–64** uniquely named services. Unknown configuration keys fail validation.
-- Each service has `name`, `url`, and an optional `timeout`.
+- An SSE service has `name`, `url`, and an optional `timeout`. `transport: "sse"` is the default and may be omitted.
+- A stdio service has `name`, `transport: "stdio"`, `command`, and optional `args`, `env`, `cwd` and `timeout`. The gateway starts it as a child process and speaks MCP over its stdin and stdout.
 - Names are at most **32 characters**: lowercase letters/digits with single internal `_` or `-` separators, starting with a letter. `__` and trailing separators are forbidden so routing stays unambiguous.
 - `timeout` is milliseconds, defaults to **10000**, and must be **100–300000**. It bounds the entire startup plus initial discovery, each subsequent full discovery, and each tool call. Progress does not extend deadlines.
 - URLs must use **HTTPS**, except HTTP on `localhost`, `127.0.0.1`, or `[::1]` for local development. URL credentials and fragments are forbidden. Configure the final SSE URL: redirects are not followed.
-- The same process-scoped token and tenant are sent to every configured service. Only list trusted endpoints authorized to receive those credentials.
+- A stdio child starts with a minimal environment: the MCP SDK's safe set (`PATH`, `HOME`, `USER`, `SHELL`, `TERM`, `LOGNAME` and their Windows equivalents), the service's `env`, then `SYNAPSE_TENANT_ID` and `SYNAPSE_SERVICE_NAME`, which `env` cannot set. It does not inherit the gateway's other variables, and never `SERVICE_AUTH_TOKEN`. Its stderr goes to the gateway's stderr; its stdout carries only MCP frames. It stops when the gateway shuts down.
+- `env` keys are shell-style names (`A-Z`, `a-z`, digits, `_`), at most 64 of them. Put no secrets in `config.json`; a child that needs a credential should load it itself.
+- The same process-scoped token and tenant are sent to every configured SSE service. Only list trusted endpoints authorized to receive those credentials.
 - Zod validates configuration, which is frozen at startup. Restart to change endpoints, rotate credentials, or change tenants.
 
 Use your system's trusted CA configuration for internal TLS. Do not disable certificate validation.
@@ -79,7 +82,7 @@ This interface is read-only and scoped to the same OS user. It does not provide 
 
 This is a **tools-only** gateway. It does not proxy resources, prompts, sampling, elicitation, subscriptions, or experimental tasks. It exposes no network listener upstream.
 
-The template deliberately uses `SSEClientTransport` for existing SSE servers. The SDK recommends Streamable HTTP for new deployments, but a Streamable HTTP `/mcp` endpoint cannot be substituted for an SSE `/sse` endpoint without changing the transport implementation.
+Downstreams are SSE servers or local stdio servers. The template deliberately uses `SSEClientTransport` for existing SSE servers. The SDK recommends Streamable HTTP for new deployments, but a Streamable HTTP `/mcp` endpoint cannot be substituted for an SSE `/sse` endpoint without changing the transport implementation.
 
 ## Tenant security contract
 

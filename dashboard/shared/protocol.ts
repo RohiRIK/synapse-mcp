@@ -14,7 +14,7 @@ export const logEventSchema = z.object({
 export const inspectionSchema = z.object({
   services: z.array(z.object({
     name: z.string().max(32),
-    transport: z.enum(['sse', 'streamable-http']),
+    transport: z.enum(['sse', 'stdio', 'streamable-http']),
     status: z.enum(['connecting', 'ready', 'offline']),
     toolCount: z.number().int().nonnegative(),
     activeRequests: z.number().int().nonnegative(),

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import {
   CallToolResultSchema,
   ErrorCode,
@@ -10,7 +12,7 @@ import {
   type CallToolResult,
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
-import type { GatewayConfig, ServiceConfig } from './config.js';
+import type { GatewayConfig, ServiceConfig, SseServiceConfig, StdioServiceConfig } from './config.js';
 
 type LogEvent = { time: string; level: 'info' | 'warn' | 'error'; message: string; service?: string };
 const logListeners = new Set<(event: LogEvent) => void>();
@@ -78,10 +80,55 @@ export function createAuthenticatedFetch(config: GatewayConfig, url: URL, lifeti
   };
 }
 
+/**
+ * The environment a stdio service starts with: the SDK's minimal safe set (PATH, HOME, USER,
+ * SHELL, TERM, LOGNAME and their Windows equivalents), the service's own `env`, then the
+ * gateway's identity, which config cannot override. SERVICE_AUTH_TOKEN is never passed.
+ */
+export function childEnvironment(
+  service: StdioServiceConfig,
+  tenantId: string,
+  inherited: Record<string, string> = getDefaultEnvironment(),
+): Record<string, string> {
+  return {
+    ...inherited,
+    ...service.env,
+    SYNAPSE_TENANT_ID: tenantId,
+    SYNAPSE_SERVICE_NAME: service.name,
+  };
+}
+
+function sseTransport(config: GatewayConfig, service: SseServiceConfig, lifetime: AbortSignal): Transport {
+  const authenticatedFetch = createAuthenticatedFetch(config, new URL(service.url), lifetime);
+  return new SSEClientTransport(new URL(service.url), {
+    // Modern EventSource uses a fetch hook, NOT a nonstandard "headers" field.
+    eventSourceInit: { fetch: authenticatedFetch },
+    requestInit: {
+      headers: {
+        Authorization: `Bearer ${config.serviceAuthToken}`,
+        'X-Tenant-ID': config.tenantId,
+      },
+      redirect: 'error',
+    },
+    fetch: authenticatedFetch,
+  });
+}
+
+function stdioTransport(config: GatewayConfig, service: StdioServiceConfig): Transport {
+  return new StdioClientTransport({
+    command: service.command,
+    args: [...service.args],
+    env: childEnvironment(service, config.tenantId),
+    ...(service.cwd === undefined ? {} : { cwd: service.cwd }),
+    // A child's stderr is its log; stdout is reserved for MCP frames, so it cannot reach the host.
+    stderr: 'inherit',
+  });
+}
+
 type Connection = {
   config: ServiceConfig;
   client: Client;
-  transport: SSEClientTransport;
+  transport: Transport;
   abort: AbortController;
   status: 'connecting' | 'ready' | 'offline';
   tools: Tool[];
@@ -107,19 +154,9 @@ export class DownstreamManager {
     this.observing = config.dashboardEnabled === true;
     for (const service of config.services) {
       const abort = new AbortController();
-      const authenticatedFetch = createAuthenticatedFetch(config, new URL(service.url), abort.signal);
-      const transport = new SSEClientTransport(new URL(service.url), {
-        // Modern EventSource uses a fetch hook, NOT a nonstandard "headers" field.
-        eventSourceInit: { fetch: authenticatedFetch },
-        requestInit: {
-          headers: {
-            Authorization: `Bearer ${config.serviceAuthToken}`,
-            'X-Tenant-ID': config.tenantId,
-          },
-          redirect: 'error',
-        },
-        fetch: authenticatedFetch,
-      });
+      const transport = service.transport === 'stdio'
+        ? stdioTransport(config, service)
+        : sseTransport(config, service, abort.signal);
       const client = new Client({ name: 'tenant-mcp-gateway', version: '1.0.0' }, { capabilities: {} });
       const connection: Connection = {
         config: service, client, transport, abort, status: 'connecting', tools: [], refreshAgain: false,
@@ -283,7 +320,7 @@ export class DownstreamManager {
   inspect() {
     const services = [...this.connections.values()].map((connection) => ({
       name: connection.config.name,
-      transport: 'sse' as const,
+      transport: connection.config.transport,
       status: connection.status,
       toolCount: connection.status === 'ready' ? connection.tools.length : 0,
       activeRequests: connection.activeRequests,
