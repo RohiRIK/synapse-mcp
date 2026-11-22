@@ -63,6 +63,7 @@ async function fixture() {
           return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data };
         });
         sessions.set(transport.sessionId, { server, transport });
+        req.socket.once('close', () => { void server.close(); });
         server.onclose = () => { sessions.delete(transport.sessionId); };
         await server.connect(transport);
         return;
