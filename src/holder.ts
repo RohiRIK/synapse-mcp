@@ -236,6 +236,16 @@ export function createHolderSessions(
         if (socket) await holderRequest(socket, SIGN_OUT_METHOD, {}, STATUS_TIMEOUT_MS * 5).catch(() => undefined);
       },
       isSignedIn: () => signedIn,
+      // The holder signs in with a browser itself; there is never a device code to show here.
+      flow: 'interactive',
+      access,
+      needsSignIn: () => !signedIn,
+      beginSignIn() {
+        const done = this.ensureSignedIn();
+        done.catch(() => {});
+        return { code: Promise.resolve(null), done };
+      },
+      cancelSignIn: () => {},
     };
   };
 

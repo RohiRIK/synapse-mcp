@@ -76,6 +76,11 @@ test('no holder can start: Synapse signs in for itself and says so', async () =>
       },
       signOut: async () => undefined,
       isSignedIn: () => true,
+      flow: 'interactive',
+      access: 'read',
+      needsSignIn: () => false,
+      beginSignIn: () => ({ code: Promise.resolve(null), done: Promise.resolve() }),
+      cancelSignIn: () => {},
     },
   };
   const sessions = createHolderSessions(

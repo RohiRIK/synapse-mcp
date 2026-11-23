@@ -14,8 +14,11 @@ async function main(): Promise<void> {
     clientId: signIn.clientId === 'wellknown' ? WELL_KNOWN_GRAPH_CLI_CLIENT_ID : signIn.clientId,
     writeClientId: signIn.writeClientId,
     maxSessionAgeMs: signIn.sessionMaxAgeHours * 3_600_000,
+    flow: signIn.flow,
   };
-  const holder = signIn?.holder;
+  // The holder signs in with a browser on this machine; a device code sign-in stays in this process.
+  const holder = signIn?.flow === 'device_code' ? undefined : signIn?.holder;
+  if (signIn?.holder && !holder) log('warn', 'signIn.holder is not used with flow device_code; signing in for this gateway only');
   const downstream = new DownstreamManager(config, signInOptions && (
     holder && process.platform !== 'win32'
       // One sign-in shared with every gateway, CLI command and probe on this machine.

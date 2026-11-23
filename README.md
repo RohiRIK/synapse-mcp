@@ -2,6 +2,9 @@
 
 **One connection to your tools. A fixed tenant context for every call.**
 
+> [!WARNING]
+> 🧪 **Read this first.** This is my playground, not a fortress. I built it to learn how Microsoft Graph, MCP and AI agents fit together, and to find out what breaks. I'm not claiming it's the most secure project in the world, only the one I learned the most from. It has guardrails (read-only by default, a human clicks before any write, one locked tenant), but guardrails are not a guarantee and nobody has audited this code. Treat it like any code from a stranger's GitHub: read it, try it on a test tenant first, and tell me what you broke.
+
 A **client-agnostic MCP gateway** for agents, IDEs, and custom applications. Connect any host with an MCP stdio integration to multiple internal MCP services. Synapse combines their tools, routes each call to the right service, and adds your service token and tenant ID to every downstream request.
 
 Claude, Cursor, Hermes, OpenClaw, pi, or your own agent—the integration point is **MCP**, not a particular product. Each host needs compatible MCP support, either built in or through an adapter; see [client compatibility](#client-compatibility).

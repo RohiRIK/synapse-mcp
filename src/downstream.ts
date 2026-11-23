@@ -14,8 +14,10 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { GatewayConfig, ServiceConfig, SseServiceConfig, StdioServiceConfig } from './config.js';
+import { deviceCodeSignIn, type SignInChannel } from './device-code.js';
 import {
-  answerTokenRequest, type BrokerSessions, EXPECTED_TENANT_ENV, SIGN_OUT_METHOD, signOutAll, TOKEN_BROKER_ENV, TOKEN_METHOD,
+  answerTokenRequest, type BrokerSessions, EXPECTED_TENANT_ENV, type MemorySession, SIGN_OUT_METHOD, sessionFor, signOutAll,
+  TOKEN_BROKER_ENV, TOKEN_METHOD,
 } from './signin.js';
 
 const tokenRequestSchema = z.object({
@@ -162,7 +164,12 @@ export class DownstreamManager {
   private completedCalls = 0;
   private failedCalls = 0;
   onToolsChanged: () => void = () => {};
+  /** How a device code reaches the person; set by the gateway, which owns the client connection. */
+  signInChannel: SignInChannel | undefined;
   private sessions: Promise<BrokerSessions> | undefined;
+  // One prompt per session at a time, however many calls are waiting on it.
+  private readonly deviceCodePrompts = new Map<MemorySession, Promise<CallToolResult | null>>();
+  private readonly tenantId: string;
 
   /**
    * `signIn` builds the Microsoft sign-in sessions on first use. Injected so tests can lend
@@ -170,6 +177,7 @@ export class DownstreamManager {
    */
   constructor(config: GatewayConfig, private readonly signIn?: () => Promise<BrokerSessions>) {
     this.observing = config.dashboardEnabled === true;
+    this.tenantId = config.tenantId;
     for (const service of config.services) {
       const abort = new AbortController();
       const transport = service.transport === 'stdio'
@@ -187,7 +195,11 @@ export class DownstreamManager {
       if (service.transport === 'stdio' && service.signIn) {
         client.setRequestHandler(tokenRequestSchema, async (request) => {
           try {
-            const token = await answerTokenRequest(await this.signInSessions(), request.params);
+            const sessions = await this.signInSessions();
+            // A sign-in needed mid-call (a write's first token, or a session aged out).
+            const blocked = await this.deviceCodeSignIn(sessionFor(sessions, request.params));
+            if (blocked) throw new Error(blocked.content.map((item) => (item.type === 'text' ? item.text : '')).join('\n'));
+            const token = await answerTokenRequest(sessions, request.params);
             return { accessToken: token.accessToken, expiresOn: token.expiresOn };
           } catch (error) {
             // Our own refusal or MSAL's message; never a token.
@@ -201,6 +213,16 @@ export class DownstreamManager {
       }
       this.connections.set(service.name, connection);
     }
+  }
+
+  private deviceCodeSignIn(session: MemorySession): Promise<CallToolResult | null> {
+    let prompt = this.deviceCodePrompts.get(session);
+    if (!prompt) {
+      prompt = deviceCodeSignIn(session, this.signInChannel, this.tenantId)
+        .finally(() => this.deviceCodePrompts.delete(session));
+      this.deviceCodePrompts.set(session, prompt);
+    }
+    return prompt;
   }
 
   private signInSessions(): Promise<BrokerSessions> {
@@ -307,7 +329,10 @@ export class DownstreamManager {
       .flatMap((connection) => connection.tools.map((tool) => ({ service: connection.config.name, tool })));
   }
 
-  async call(service: string, params: CallToolRequest['params'], signal: AbortSignal): Promise<CallToolResult> {
+  /** `write`: the person approved a change, so a separate write identity signs in before it runs. */
+  async call(
+    service: string, params: CallToolRequest['params'], signal: AbortSignal, options: { write?: boolean } = {},
+  ): Promise<CallToolResult> {
     const connection = this.connections.get(service);
     if (!connection) throw new McpError(ErrorCode.MethodNotFound, 'Unknown downstream service');
     if (connection.status !== 'ready') throw new McpError(ErrorCode.InternalError, 'Downstream service unavailable');
@@ -315,9 +340,14 @@ export class DownstreamManager {
       throw new McpError(ErrorCode.MethodNotFound, 'Unknown downstream tool');
     }
     if (connection.config.transport === 'stdio' && connection.config.signIn) {
-      // Open the browser before the call's deadline starts, not inside it.
+      // Open the browser, or show the device code, before the call's deadline starts, not inside it.
       try {
-        await (await this.signInSessions()).read.ensureSignedIn();
+        const sessions = await this.signInSessions();
+        for (const session of options.write && sessions.write ? [sessions.read, sessions.write] : [sessions.read]) {
+          const blocked = await this.deviceCodeSignIn(session);
+          if (blocked) return blocked;
+        }
+        await sessions.read.ensureSignedIn();
       } catch (error) {
         throw new McpError(ErrorCode.InternalError,
           `Microsoft sign-in did not complete, so nothing ran: ${error instanceof Error ? error.message : 'unknown error'}`);
