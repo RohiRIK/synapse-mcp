@@ -1,6 +1,6 @@
 # Plan: a lightweight, controllable MCP gateway
 
-**Status:** core dual-transport/lifecycle/control work remains planned. A separately requested [optional, read-only dashboard](../../dashboard/README.md) now implements basic live inspection, bounded event history, and private local telemetry. It is disabled by default and does not yet provide the mutating controls or dual transports below.
+**Status:** core dual-transport/lifecycle/control work remains planned. Since this plan was written, Synapse gained local stdio services, approval in the client, and an in-memory Microsoft sign-in for Graph planes; see the [README status](../../README.md#status). A separately requested [optional, read-only dashboard](../../dashboard/README.md) now implements basic live inspection, bounded event history, and private local telemetry. It is disabled by default and does not yet provide the mutating controls or dual transports below.
 
 ## Goal
 
