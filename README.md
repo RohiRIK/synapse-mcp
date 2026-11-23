@@ -43,12 +43,14 @@ The model chooses a tool. **It does not choose the tenant.** That identity comes
 | Any compatible MCP **stdio** host → gateway | Optional client-facing Streamable HTTP endpoint |
 | Gateway → downstream **SSE** and local **stdio** services | Downstream Streamable HTTP alongside SSE |
 | Optional read-only local dashboard | Reconnect, disconnect, and operator cancellation controls |
+| One in-memory Microsoft sign-in lent to stdio Graph planes, locked to `TENANT_ID` | Device code sign-in for a gateway on a remote server ([PR #7](https://github.com/RohiRIK/synapse-mcp/pull/7), not merged yet) |
+| Approval in the client (MCP elicitation) for confirm-gated calls | Proxying resources and prompts, and gateway-local tools |
 
 The dashboard's HTTP server is for the browser UI only. It is **not** an MCP endpoint. See the [implementation plan](docs/plans/lightweight-gateway.md) for the next steps.
 
 ## Get started
 
-You'll need **Bun 1.3.14+** and at least one downstream MCP server with an SSE endpoint. The example billing and CRM services are not included.
+You'll need **Bun 1.3.14+** and at least one downstream MCP server, reached over SSE or started locally over stdio. The example billing and CRM services are not included. For the Microsoft Graph planes, skip to [Synapse as the Microsoft Graph gateway](docs/microsoft-graph.md).
 
 ### Platform support
 
@@ -253,9 +255,28 @@ The optional dashboard has separate integration and browser checks. See **[smoke
 | A tool call rejects `tenant_id` | Remove it from the arguments. Tenant identity belongs in the process environment. |
 | A mutation timed out | Check the backend before retrying; the operation may already have executed. Use backend idempotency keys. |
 
+## Status
+
+Synapse is replacing `gateway_mcp` as the gateway for [microsoft-graph-mcp-servers](https://github.com/RohiRIK/microsoft-graph-mcp-servers).
+
+| Done | Change |
+| --- | --- |
+| [#1](https://github.com/RohiRIK/synapse-mcp/pull/1) | MIT license |
+| [#2](https://github.com/RohiRIK/synapse-mcp/pull/2) | Runs on Bun instead of Node |
+| [#3](https://github.com/RohiRIK/synapse-mcp/pull/3) | Local stdio services alongside SSE |
+| [#4](https://github.com/RohiRIK/synapse-mcp/pull/4) | Approval in the client for confirm-gated calls |
+| [#5](https://github.com/RohiRIK/synapse-mcp/pull/5) | One in-memory Microsoft sign-in, locked to the tenant, lent to Graph planes |
+| [#6](https://github.com/RohiRIK/synapse-mcp/pull/6) | Ready config for the five Graph planes |
+
+Still open:
+
+- Device code sign-in for a Synapse on a remote server without a browser ([PR #7](https://github.com/RohiRIK/synapse-mcp/pull/7)), then a test against a real tenant.
+- A real browser sign-in through Synapse, and installing it as a plugin on Hermes and OpenClaw. Neither has been run yet.
+- Resources and prompts (`gateway://session`) and the gateway-local tools from `gateway_mcp`.
+
 ## Want to change how it works?
 
-The core is four files:
+The core is six files:
 
 | File | Responsibility |
 | --- | --- |
@@ -263,5 +284,7 @@ The core is four files:
 | [`src/downstream.ts`](src/downstream.ts) | Connect, authenticate, discover tools, and enforce deadlines |
 | [`src/gateway.ts`](src/gateway.ts) | Namespace tools, reject tenant overrides, and route calls |
 | [`src/index.ts`](src/index.ts) | Run stdio and handle shutdown |
+| [`src/signin.ts`](src/signin.ts) | Optional Microsoft sign-in, held in memory and lent to stdio Graph planes |
+| [`src/approval.ts`](src/approval.ts) | Ask the person in the client before a confirm-gated call runs |
 
 For configuration limits, protocol behavior, deployment notes, and the multi-tenant config example, see the **[technical reference](docs/reference.md)**.

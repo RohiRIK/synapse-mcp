@@ -14,7 +14,7 @@ Configure the host's stdio integration with:
 | --- | --- |
 | Executable | Absolute path to `bun` |
 | Arguments | `--no-env-file`, then the absolute path to this repository's `src/index.ts` |
-| Environment | `SERVICE_AUTH_TOKEN`, `TENANT_ID`, and an absolute `MCP_CONFIG_PATH` |
+| Environment | `TENANT_ID`, an absolute `MCP_CONFIG_PATH`, and `SERVICE_AUTH_TOKEN` when any SSE service is configured |
 | Optional telemetry | `MCP_DASHBOARD_ENABLED=true` only when the dashboard package is built and wanted |
 
 The host owns the process's stdin/stdout; stdout contains MCP frames only. Each host launches its own process and fixes its tenant through the environment. There is no vendor-specific routing, no shared upstream HTTP endpoint, and no session recovery after that process exits.
