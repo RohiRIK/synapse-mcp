@@ -38,7 +38,7 @@ const ensure = () => ensureHolder({
 
 test('the socket name matches microsoft-graph-mcp-servers exactly', () => {
   // Pinned from mcp_shared's holderSocketPath for the same inputs.
-  expect(holderSocketPath(TENANT, CLIENT, '/h')).toBe('/h/.mcp-graph/run/signin-15228cf443e65784.sock');
+  expect(holderSocketPath(TENANT, CLIENT, '/h')).toBe(join('/h', '.mcp-graph', 'run', 'signin-15228cf443e65784.sock'));
 });
 
 test.skipIf(!SOCKETS)('three Synapse runs share one sign-in, and stopping one does not end it', async () => {
