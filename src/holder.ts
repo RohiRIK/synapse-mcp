@@ -51,6 +51,8 @@ export const holderSocketPath = (tenantId: string, clientId: string, home: strin
 };
 
 const UNREACHABLE = new Set(['ENOENT', 'ECONNREFUSED', 'ENOTSOCK', 'ECONNRESET', 'EPIPE']);
+/** macOS caps a Unix socket path at 104 bytes; past it connect fails with EINVAL. */
+const MAX_SOCKET_PATH_BYTES = 103;
 
 export function holderRequest(
   socketPath: string,
@@ -59,6 +61,10 @@ export function holderRequest(
   timeoutMs = TOKEN_TIMEOUT_MS,
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
+    if (Buffer.byteLength(socketPath) > MAX_SOCKET_PATH_BYTES) {
+      reject(new HolderUnavailableError(`The sign-in holder's socket path is over ${MAX_SOCKET_PATH_BYTES} bytes: ${socketPath}`));
+      return;
+    }
     const socket = createConnection(socketPath);
     let buffer = '';
     let settled = false;

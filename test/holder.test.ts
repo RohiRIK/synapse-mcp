@@ -17,9 +17,11 @@ const TENANT = '11111111-1111-1111-1111-111111111111';
 const CLIENT = '14d82eec-204b-4c2f-b7e8-296a70dab67e';
 const FAKE = fileURLToPath(new URL('./fixtures/fake-holder.ts', import.meta.url));
 
+/** The holder is Unix-socket based and Synapse never uses it on Windows; its socket tests run where it runs. */
+const SOCKETS = process.platform !== 'win32';
 let home = '';
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), 'syn-holder-'));
+  home = mkdtempSync(SOCKETS ? '/tmp/s-' : join(tmpdir(), 's-'));
 });
 afterEach(async () => {
   await holderRequest(holderSocketPath(TENANT, CLIENT, home), SIGN_OUT_METHOD, {}, 2_000).catch(() => undefined);
@@ -39,7 +41,7 @@ test('the socket name matches microsoft-graph-mcp-servers exactly', () => {
   expect(holderSocketPath(TENANT, CLIENT, '/h')).toBe('/h/.mcp-graph/run/signin-15228cf443e65784.sock');
 });
 
-test('three Synapse runs share one sign-in, and stopping one does not end it', async () => {
+test.skipIf(!SOCKETS)('three Synapse runs share one sign-in, and stopping one does not end it', async () => {
   const tokens: string[] = [];
   for (let run = 0; run < 3; run++) {
     const sessions = createHolderSessions(ensure, noLocal, () => undefined);
@@ -51,13 +53,17 @@ test('three Synapse runs share one sign-in, and stopping one does not end it', a
   expect(existsSync(holderSocketPath(TENANT, CLIENT, home))).toBe(true);
 }, 30_000);
 
-test('sign-out ends the shared holder', async () => {
+test.skipIf(!SOCKETS)('sign-out ends the shared holder', async () => {
   const sessions = createHolderSessions(ensure, noLocal, () => undefined);
   await sessions.read.getToken(['User.Read.All']);
   await sessions.read.signOut();
   await Bun.sleep(100);
   expect(existsSync(holderSocketPath(TENANT, CLIENT, home))).toBe(false);
 }, 30_000);
+
+test('a socket path over the macOS limit counts as no holder', async () => {
+  await expect(holderRequest(`/tmp/${'x'.repeat(120)}.sock`, 'x-mcp-graph/status')).rejects.toBeInstanceOf(HolderUnavailableError);
+});
 
 test('no holder can start: Synapse signs in for itself and says so', async () => {
   const warnings: string[] = [];
