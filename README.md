@@ -2,6 +2,9 @@
 
 **One connection to your tools. A fixed tenant context for every call.**
 
+> [!WARNING]
+> **A learning project, not a security product.** I built this to explore and learn: MCP, Microsoft Graph, and how agents can work with a Microsoft 365 tenant. It has guardrails (read-only by default, writes need a person's approval, sign-in kept in memory), but it has not had an independent security review or a penetration test, and I don't claim it is the most secure way to do any of this. It reaches real tenants with real permissions. Read the code before you point it at a tenant you care about, prefer a test tenant, and use it at your own risk. It is provided as is, without warranty (see [LICENSE](LICENSE)).
+
 A **client-agnostic MCP gateway** for agents, IDEs, and custom applications. Connect any host with an MCP stdio integration to multiple internal MCP services. Synapse combines their tools, routes each call to the right service, and adds your service token and tenant ID to every downstream request.
 
 Claude, Cursor, Hermes, OpenClaw, pi, or your own agent—the integration point is **MCP**, not a particular product. Each host needs compatible MCP support, either built in or through an adapter; see [client compatibility](#client-compatibility).
