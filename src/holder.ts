@@ -14,7 +14,7 @@
  */
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, mkdirSync, openSync, statSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, statSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -63,6 +63,11 @@ export function holderRequest(
   return new Promise((resolve, reject) => {
     if (Buffer.byteLength(socketPath) > MAX_SOCKET_PATH_BYTES) {
       reject(new HolderUnavailableError(`The sign-in holder's socket path is over ${MAX_SOCKET_PATH_BYTES} bytes: ${socketPath}`));
+      return;
+    }
+    // Checked up front: Bun 1.3 emits a missing socket's ENOENT before any listener can attach.
+    if (!existsSync(socketPath)) {
+      reject(new HolderUnavailableError(`No sign-in holder at ${socketPath} (ENOENT).`));
       return;
     }
     const socket = createConnection(socketPath);
