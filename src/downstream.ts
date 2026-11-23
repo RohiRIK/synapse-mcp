@@ -387,7 +387,8 @@ export class DownstreamManager {
 
   async close(): Promise<void> {
     this.stopped = true;
-    if (this.sessions) await this.sessions.then(signOutAll).catch(() => {});
+    // A shared sign-in (the machine's holder) outlives this process by design; only our own ends here.
+    if (this.sessions) await this.sessions.then((s) => (s.shared ? undefined : signOutAll(s))).catch(() => {});
     await Promise.allSettled([...this.connections.values()].map((connection) => this.closeConnection(connection)));
   }
 }

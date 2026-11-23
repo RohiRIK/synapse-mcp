@@ -2,18 +2,30 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { loadConfig } from './config.js';
 import { DownstreamManager, log, subscribeLogs } from './downstream.js';
 import { createGateway } from './gateway.js';
+import { createHolderSessions, ensureHolder } from './holder.js';
 import { createSignInSessions, WELL_KNOWN_GRAPH_CLI_CLIENT_ID } from './signin.js';
 
 async function main(): Promise<void> {
   const config = await loadConfig();
   const { signIn } = config;
   // Built on first use: no MSAL client, and no browser, until a signed-in service needs one.
-  const downstream = new DownstreamManager(config, signIn && (() => createSignInSessions({
+  const signInOptions = signIn && {
     tenantId: config.tenantId,
     clientId: signIn.clientId === 'wellknown' ? WELL_KNOWN_GRAPH_CLI_CLIENT_ID : signIn.clientId,
     writeClientId: signIn.writeClientId,
     maxSessionAgeMs: signIn.sessionMaxAgeHours * 3_600_000,
-  })));
+  };
+  const holder = signIn?.holder;
+  const downstream = new DownstreamManager(config, signInOptions && (
+    holder && process.platform !== 'win32'
+      // One sign-in shared with every gateway, CLI command and probe on this machine.
+      ? async () => createHolderSessions(
+        () => ensureHolder({ ...signInOptions, launch: holder }),
+        () => createSignInSessions(signInOptions),
+        (message) => log('warn', message),
+      )
+      : () => createSignInSessions(signInOptions)
+  ));
   const server = createGateway(config, downstream);
   const transport = new StdioServerTransport(process.stdin, process.stdout, { maxBufferSize: 1024 * 1024 });
   let stopping: Promise<void> | undefined;

@@ -1,7 +1,14 @@
 {
   "signIn": {
     "clientId": "wellknown",
-    "sessionMaxAgeHours": 8
+    "sessionMaxAgeHours": 8,
+    "holder": {
+      "command": "/absolute/path/to/bun",
+      "args": [
+        "run",
+        "/absolute/path/to/microsoft-graph-mcp-servers/gateway_mcp/src/holder.ts"
+      ]
+    }
   },
   "services": [
     {
