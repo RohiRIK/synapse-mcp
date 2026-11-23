@@ -62,6 +62,13 @@ const signInSchema = z.object({
   sessionMaxAgeHours: z.number().min(0.25).max(24).default(8),
   // `device_code` when Synapse runs where nobody can open a browser (an agent on a remote server).
   flow: z.enum(['interactive', 'device_code']).default('interactive'),
+  // Borrow the machine's shared sign-in holder (microsoft-graph-mcp-servers' gateway_mcp/src/holder.ts)
+  // instead of signing in inside this process: one browser prompt per work session, not per restart.
+  // The holder signs in with a browser, so it is not used with `device_code`.
+  holder: z.object({
+    command: z.string().min(1).max(4096),
+    args: z.array(z.string().max(4096)).max(32).default([]),
+  }).strict().optional(),
 }).strict().refine(
   (value) => value.writeClientId === undefined || value.writeClientId.toLowerCase() !== value.clientId.toLowerCase(),
   { message: 'writeClientId must differ from clientId', path: ['writeClientId'] },
