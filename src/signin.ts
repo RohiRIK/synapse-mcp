@@ -12,6 +12,11 @@
  *
  * The session is bound to the gateway's TENANT_ID: an account from any other directory is
  * dropped as soon as the sign-in returns. Only Microsoft Graph delegated scopes are lent.
+ *
+ * Two ways to sign in. `interactive` opens a browser on this machine and waits on a loopback
+ * redirect, so it needs a browser where Synapse runs. `device_code` is for an agent on a remote
+ * server: Microsoft hands out a short code, the person enters it at the verification page on any
+ * device of theirs, and this process polls until they have. Either way nothing is kept on disk.
  */
 import { spawn } from 'node:child_process';
 
@@ -24,6 +29,18 @@ export const SIGN_OUT_METHOD = 'x-mcp-graph/sign-out';
 export const WELL_KNOWN_GRAPH_CLI_CLIENT_ID = '14d82eec-204b-4c2f-b7e8-296a70dab67e';
 /** How long a write sign-in lasts at most. It is a step-up, not a session. */
 export const WRITE_SESSION_MAX_AGE_MS = 15 * 60_000;
+
+export type SignInFlow = 'interactive' | 'device_code';
+export type SignInAccess = 'read' | 'write';
+
+/** What the person needs to finish a device code sign-in. Shown to them, never a token. */
+export interface DeviceCodePrompt {
+  readonly access: SignInAccess;
+  readonly userCode: string;
+  readonly verificationUri: string;
+  /** Epoch milliseconds after which the code no longer works. */
+  readonly expiresAt: number;
+}
 
 /** A token is refreshed this long before it expires. */
 const REFRESH_MARGIN_MS = 5 * 60_000;
@@ -54,6 +71,12 @@ export interface MsalLike {
     openBrowser: (url: string) => Promise<void>;
     prompt?: never;
   }): Promise<MsalResultLike | null>;
+  /** msal-node polls until the person finishes, the code expires, or `cancel` is set on this request. */
+  acquireTokenByDeviceCode(request: {
+    scopes: string[];
+    deviceCodeCallback: (response: { userCode: string; verificationUri: string; expiresIn: number }) => void;
+    cancel?: boolean;
+  }): Promise<MsalResultLike | null>;
   getTokenCache(): {
     getAllAccounts(): Promise<MsalAccountLike[]>;
     removeAccount(account: never): Promise<void>;
@@ -69,6 +92,18 @@ export interface MemorySessionOptions {
   readonly selectAccountPrompt: string;
   readonly signInScopes?: readonly string[];
   readonly now?: () => number;
+  /** Default `interactive`. */
+  readonly flow?: SignInFlow;
+  /** Which identity this session is, for the person reading a device code prompt. */
+  readonly access?: SignInAccess;
+  /** Told each new device code, for the operator's log. Presenting it to the person is the gateway's job. */
+  readonly onDeviceCode?: (prompt: DeviceCodePrompt) => void;
+}
+
+/** A sign-in in progress. `code` settles first: the device code, or null for a browser sign-in. */
+export interface PendingSignIn {
+  readonly code: Promise<DeviceCodePrompt | null>;
+  readonly done: Promise<void>;
 }
 
 export interface MemorySession {
@@ -77,6 +112,14 @@ export interface MemorySession {
   ensureSignedIn(): Promise<void>;
   signOut(): Promise<void>;
   isSignedIn(): boolean;
+  readonly flow: SignInFlow;
+  readonly access: SignInAccess;
+  /** Nobody is signed in, or the sign-in is past its maximum age. */
+  needsSignIn(): boolean;
+  /** Start a sign-in, or join the one in progress, without waiting for it to finish. */
+  beginSignIn(): PendingSignIn;
+  /** Stop polling for a device code the person declined. A browser sign-in cannot be cancelled. */
+  cancelSignIn(): void;
 }
 
 const OIDC_SCOPES = new Set(['openid', 'profile', 'offline_access', 'email']);
@@ -102,18 +145,22 @@ const sameTenant = (a: string | undefined, b: string): boolean => a?.toLowerCase
 export function createMemorySession(options: MemorySessionOptions): MemorySession {
   const now = options.now ?? Date.now;
   const signInScopes = [...(options.signInScopes ?? ['User.Read'])];
+  const flow = options.flow ?? 'interactive';
+  const access = options.access ?? 'read';
   let account: MsalAccountLike | null = null;
   let signedInAt: number | null = null;
-  // One browser at a time: several planes asking at once must not open several windows.
+  // One sign-in at a time: several planes asking at once must not open several windows or codes.
   let interactive: Promise<MsalResultLike> | null = null;
+  let pending: (PendingSignIn & { cancel(): void }) | null = null;
 
   const expired = () => signedInAt !== null && now() - signedInAt > options.maxSessionAgeMs;
 
   const forget = async (): Promise<void> => {
-    const cache = options.msal.getTokenCache();
-    for (const acct of await cache.getAllAccounts()) await cache.removeAccount(acct as never);
+    // Cleared first, so nothing started meanwhile can see the old account.
     account = null;
     signedInAt = null;
+    const cache = options.msal.getTokenCache();
+    for (const acct of await cache.getAllAccounts()) await cache.removeAccount(acct as never);
   };
 
   const toToken = (result: MsalResultLike): BrokeredToken => ({
@@ -121,16 +168,39 @@ export function createMemorySession(options: MemorySessionOptions): MemorySessio
     expiresOn: result.expiresOn?.getTime() ?? now() + REFRESH_MARGIN_MS,
   });
 
+  const acquire = (scopes: string[], showCode: (prompt: DeviceCodePrompt) => void, request: { cancel?: boolean }) => {
+    if (flow === 'interactive') {
+      return options.msal.acquireTokenInteractive({
+        scopes,
+        openBrowser: options.openBrowser,
+        prompt: options.selectAccountPrompt as never,
+      });
+    }
+    // msal-node reads `cancel` off this same object while it polls.
+    return options.msal.acquireTokenByDeviceCode(Object.assign(request, {
+      scopes,
+      deviceCodeCallback: (response: { userCode: string; verificationUri: string; expiresIn: number }) => showCode({
+        access,
+        userCode: response.userCode,
+        verificationUri: response.verificationUri,
+        expiresAt: now() + response.expiresIn * 1000,
+      }),
+    }));
+  };
+
   const signIn = (scopes: string[]): Promise<MsalResultLike> => {
-    interactive ??= (async () => {
+    if (interactive) return interactive;
+    let showCode: (prompt: DeviceCodePrompt | null) => void = () => {};
+    const code = new Promise<DeviceCodePrompt | null>((resolve) => { showCode = resolve; });
+    const request: { cancel?: boolean } = {};
+    interactive = (async () => {
       try {
-        const result = await options.msal.acquireTokenInteractive({
-          scopes,
-          openBrowser: options.openBrowser,
-          prompt: options.selectAccountPrompt as never,
-        });
+        const result = await acquire(scopes, (prompt) => {
+          options.onDeviceCode?.(prompt);
+          showCode(prompt);
+        }, request);
         if (!result?.accessToken || !result.account) {
-          throw new Error('Interactive sign-in did not return an account and token.');
+          throw new Error(`${flow === 'interactive' ? 'Interactive' : 'Device code'} sign-in did not return an account and token.`);
         }
         if (!sameTenant(result.account.tenantId, options.tenantId)) {
           await forget();
@@ -143,9 +213,15 @@ export function createMemorySession(options: MemorySessionOptions): MemorySessio
         signedInAt = now();
         return result;
       } finally {
+        showCode(null);
         interactive = null;
+        pending = null;
       }
     })();
+    const done = interactive.then(() => undefined);
+    // Whoever started it may stop listening (a person told to enter the code later): never unhandled.
+    done.catch(() => {});
+    pending = { code, done, cancel: () => { request.cancel = true; } };
     return interactive;
   };
 
@@ -160,13 +236,30 @@ export function createMemorySession(options: MemorySessionOptions): MemorySessio
     return toToken(await signIn(scopes));
   };
 
+  const needsSignIn = () => !account || expired();
+
   return {
     getToken,
     async ensureSignedIn() {
-      if (!account || expired()) await getToken(signInScopes);
+      if (needsSignIn()) await getToken(signInScopes);
     },
-    signOut: forget,
+    signOut: async () => {
+      pending?.cancel();
+      await forget();
+    },
     isSignedIn: () => account !== null,
+    flow,
+    access,
+    needsSignIn,
+    beginSignIn() {
+      if (!pending && !needsSignIn()) return { code: Promise.resolve(null), done: Promise.resolve() };
+      if (!pending) {
+        if (account && expired()) void forget();
+        void signIn([...signInScopes]).catch(() => {});
+      }
+      return pending!;
+    },
+    cancelSignIn: () => pending?.cancel(),
   };
 }
 
@@ -177,11 +270,16 @@ export interface BrokerSessions {
   readonly write?: MemorySession;
 }
 
+/** The session a token request draws on. Anything but an explicit 'write' is a read. */
+export function sessionFor(sessions: BrokerSessions, params: unknown): MemorySession {
+  const { access } = (params ?? {}) as { access?: unknown };
+  return access === 'write' ? (sessions.write ?? sessions.read) : sessions.read;
+}
+
 /** Answer one token request. Errors carry a message the plane can show, never a token. */
 export async function answerTokenRequest(sessions: BrokerSessions, params: unknown): Promise<BrokeredToken> {
-  const { scopes, access } = (params ?? {}) as { scopes?: unknown; access?: unknown };
-  // Anything but an explicit 'write' is a read.
-  const session = access === 'write' ? (sessions.write ?? sessions.read) : sessions.read;
+  const { scopes } = (params ?? {}) as { scopes?: unknown };
+  const session = sessionFor(sessions, params);
   const token = await session.getToken(scopes as readonly string[]);
   return { accessToken: token.accessToken, expiresOn: token.expiresOn };
 }
@@ -213,12 +311,21 @@ export interface SignInOptions {
   readonly clientId: string;
   readonly writeClientId?: string | undefined;
   readonly maxSessionAgeMs: number;
+  readonly flow?: SignInFlow;
+}
+
+function logDeviceCode(prompt: DeviceCodePrompt): void {
+  // For the operator's log. The person is shown the same code in the client when it can ask.
+  process.stderr.write(`${JSON.stringify({
+    time: new Date().toISOString(), level: 'warn', message: `Microsoft ${prompt.access} sign-in: enter the code at the page`,
+    url: prompt.verificationUri, code: prompt.userCode,
+  })}\n`);
 }
 
 /** Real MSAL sessions, built only when a service asks for sign-in. */
 export async function createSignInSessions(options: SignInOptions): Promise<BrokerSessions> {
   const { PromptValue, PublicClientApplication } = await import('@azure/msal-node');
-  const session = (clientId: string, maxSessionAgeMs: number) => createMemorySession({
+  const session = (clientId: string, maxSessionAgeMs: number, access: SignInAccess) => createMemorySession({
     msal: new PublicClientApplication({
       auth: {
         clientId,
@@ -231,11 +338,14 @@ export async function createSignInSessions(options: SignInOptions): Promise<Brok
     maxSessionAgeMs,
     openBrowser: openSystemBrowser,
     selectAccountPrompt: PromptValue.SELECT_ACCOUNT,
+    flow: options.flow ?? 'interactive',
+    access,
+    onDeviceCode: logDeviceCode,
   });
   return {
-    read: session(options.clientId, options.maxSessionAgeMs),
+    read: session(options.clientId, options.maxSessionAgeMs, 'read'),
     ...(options.writeClientId
-      ? { write: session(options.writeClientId, Math.min(options.maxSessionAgeMs, WRITE_SESSION_MAX_AGE_MS)) }
+      ? { write: session(options.writeClientId, Math.min(options.maxSessionAgeMs, WRITE_SESSION_MAX_AGE_MS), 'write') }
       : {}),
   };
 }

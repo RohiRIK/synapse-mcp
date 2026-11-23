@@ -18,7 +18,7 @@ The planes still read their own `settings.yaml`. `cwd` is the clone, so they fin
 
 ## What holds
 
-- **One sign-in, in memory.** The first call to any plane opens the browser once. Every plane borrows that sign-in; nothing is written to disk, and it ends with Synapse. `sessionMaxAgeHours` caps it.
+- **One sign-in, in memory.** The first call to any plane opens the browser once. Every plane borrows that sign-in; nothing is written to disk, and it ends with Synapse. `sessionMaxAgeHours` caps it. On a remote server with no browser, set `"flow": "device_code"` in the `signIn` block: the person enters a short code at microsoft.com/devicelogin from any device instead (see [reference](reference.md#signing-in-from-a-remote-server-flow-device_code)).
 - **One tenant.** The sign-in is bound to `TENANT_ID`, and each plane is started with `GATEWAY_EXPECTED_TENANT_ID` set to it. A plane whose profile names another tenant refuses to start and shows as offline; an account from another directory is dropped at sign-in.
 - **Reads by default.** Writes stay off unless the plane's profile turns them on (`enableWrites`). Children do not inherit Synapse's environment, so a stray `*_ENABLE_WRITES` in the host's shell does not reach them.
 - **A person approves each change.** Confirm-gated tools run only after the person approves the preview in the client.

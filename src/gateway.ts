@@ -9,6 +9,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { APPROVAL_SCHEMA, APPROVAL_TIMEOUT_MS, type ApprovalChannel, isConfirmGated, runApproved } from './approval.js';
 import type { GatewayConfig } from './config.js';
+import { DEVICE_CODE_SCHEMA } from './device-code.js';
 import { DownstreamManager, log } from './downstream.js';
 
 /** Reserve tenant_id and common spelling variants at every nesting level. */
@@ -73,6 +74,15 @@ export function createGateway(config: GatewayConfig, downstream: DownstreamManag
       { method: 'elicitation/create', params: { message, requestedSchema: APPROVAL_SCHEMA } },
       ElicitResultSchema,
       { timeout: APPROVAL_TIMEOUT_MS },
+    ),
+  };
+
+  downstream.signInChannel = {
+    supportsElicitation: approvals.supportsElicitation,
+    ask: (message, timeout) => server.request(
+      { method: 'elicitation/create', params: { message, requestedSchema: DEVICE_CODE_SCHEMA } },
+      ElicitResultSchema,
+      { timeout },
     ),
   };
 
@@ -142,7 +152,8 @@ export function createGateway(config: GatewayConfig, downstream: DownstreamManag
         input: args,
         tenant: config.tenantId,
         channel: approvals,
-        call: (input) => downstream.call(service, { name, arguments: input }, extra.signal),
+        // The preview is a read; only the approved call may need the write identity.
+        call: (input) => downstream.call(service, { name, arguments: input }, extra.signal, { write: input.confirm === true }),
         onOutcome: (outcome) => log(outcome === 'approved' ? 'info' : 'warn', `Approval ${outcome}`, service),
       });
     }

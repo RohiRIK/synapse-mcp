@@ -13,6 +13,7 @@ async function main(): Promise<void> {
     clientId: signIn.clientId === 'wellknown' ? WELL_KNOWN_GRAPH_CLI_CLIENT_ID : signIn.clientId,
     writeClientId: signIn.writeClientId,
     maxSessionAgeMs: signIn.sessionMaxAgeHours * 3_600_000,
+    flow: signIn.flow,
   })));
   const server = createGateway(config, downstream);
   const transport = new StdioServerTransport(process.stdin, process.stdout, { maxBufferSize: 1024 * 1024 });

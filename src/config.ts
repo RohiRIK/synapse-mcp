@@ -60,6 +60,8 @@ const signInSchema = z.object({
   // A second app registration consented for writes, signed in only when a write needs it.
   writeClientId: z.string().regex(GUID).optional(),
   sessionMaxAgeHours: z.number().min(0.25).max(24).default(8),
+  // `device_code` when Synapse runs where nobody can open a browser (an agent on a remote server).
+  flow: z.enum(['interactive', 'device_code']).default('interactive'),
 }).strict().refine(
   (value) => value.writeClientId === undefined || value.writeClientId.toLowerCase() !== value.clientId.toLowerCase(),
   { message: 'writeClientId must differ from clientId', path: ['writeClientId'] },

@@ -63,9 +63,22 @@ A top-level `signIn` block gives the gateway one interactive Microsoft sign-in, 
 - `TENANT_ID` must then be the directory's GUID. The session is bound to it: an account from any other directory is dropped as soon as the sign-in returns, and nothing is kept.
 - `clientId` is an app registration's GUID, or `wellknown` for Microsoft Graph Command Line Tools. `writeClientId` (optional) is a second registration consented for writes. It signs in only when a write first asks for a token, and its session lasts at most 15 minutes. It must differ from `clientId`.
 - `sessionMaxAgeHours` (0.25–24, default 8): after this, the next call signs in again.
+- `flow` (default `interactive`): how the person signs in. See below.
 - Everything is in memory. No token cache is written, and the sign-in ends when the gateway does, so an earlier session can never answer for this one.
 - A signed-in child gets `MCP_GRAPH_TOKEN_BROKER=1` and `GATEWAY_EXPECTED_TENANT_ID=<TENANT_ID>`, which config `env` cannot set. It asks for tokens with the JSON-RPC request `x-mcp-graph/token` over its stdio pipe; the contract is `mcp_shared/src/token-broker.ts` in microsoft-graph-mcp-servers. Only Microsoft Graph delegated scopes are lent; `.default` and other audiences are refused. Services without `signIn` cannot borrow a token.
 - The browser opens before the first call to a signed-in service starts its timeout, not during it. No browser opens until then.
+
+#### Signing in from a remote server: `"flow": "device_code"`
+
+`interactive` opens a browser on the machine Synapse runs on and waits for Microsoft to redirect to `localhost` there. An agent on a remote server has no browser, and a browser elsewhere cannot reach that redirect. With `"flow": "device_code"`, Microsoft issues a short code instead, and the person enters it at `https://microsoft.com/devicelogin` on any device of theirs:
+
+- **The client can ask (MCP elicitation):** the first call to a signed-in service shows the person the page and the code in the client, and waits. Once they have signed in and accept, the call runs. Declining stops the sign-in, and nothing runs.
+- **The client cannot ask:** that call runs nothing and answers with the page and the code, so the model can pass them on. The code keeps polling, so the same call made again after the person has signed in goes through. A code lasts about 15 minutes.
+- **Writes:** with a `writeClientId`, a change the person has approved signs the write identity in the same way before it runs. Approvals already need elicitation, so this code is shown in the client. A write token first asked for in the middle of a call fails that call with the code in its error instead.
+- The code is also written to the gateway's stderr log, as the browser URL is.
+- Everything else is the same: nothing is kept on disk, the session is bound to `TENANT_ID`, and an account from another directory is dropped.
+- Many tenants block device code with a Microsoft-managed Conditional Access policy. If the sign-in fails with a Conditional Access error, that is why; the tenant's administrator decides whether to allow it.
+- The MCP client's own request timeout still applies while the person signs in. If it is shorter than the sign-in, the call fails, and the next call goes through once they have signed in.
 - A sign-in is not an approval: confirm-gated tools still need the person's approval in the client.
 
 ### Environment files and dependencies
