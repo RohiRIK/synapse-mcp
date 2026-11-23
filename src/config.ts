@@ -60,6 +60,12 @@ const signInSchema = z.object({
   // A second app registration consented for writes, signed in only when a write needs it.
   writeClientId: z.string().regex(GUID).optional(),
   sessionMaxAgeHours: z.number().min(0.25).max(24).default(8),
+  // Borrow the machine's shared sign-in holder (microsoft-graph-mcp-servers' gateway_mcp/src/holder.ts)
+  // instead of signing in inside this process: one browser prompt per work session, not per restart.
+  holder: z.object({
+    command: z.string().min(1).max(4096),
+    args: z.array(z.string().max(4096)).max(32).default([]),
+  }).strict().optional(),
 }).strict().refine(
   (value) => value.writeClientId === undefined || value.writeClientId.toLowerCase() !== value.clientId.toLowerCase(),
   { message: 'writeClientId must differ from clientId', path: ['writeClientId'] },

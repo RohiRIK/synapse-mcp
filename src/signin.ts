@@ -171,6 +171,8 @@ export function createMemorySession(options: MemorySessionOptions): MemorySessio
 }
 
 export interface BrokerSessions {
+  /** The session belongs to the machine's sign-in holder: stopping Synapse must not end it. */
+  readonly shared?: boolean;
   /** Opened at the first call to a signed-in service. */
   readonly read: MemorySession;
   /** The write client's step-up session. Absent: writes share the read session. */
